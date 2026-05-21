@@ -1,10 +1,10 @@
 name: CI
 
+# 完全な CI/CD パイプライン（バックエンドデプロイ含む）。
+# シークレットが揃ってから手動で有効化する想定のため、現在は workflow_dispatch のみ。
+# APK ビルドだけが目的なら build-apk.yml を使う。
 on:
-  push:
-    branches: [main, develop]
-  pull_request:
-    branches: [main]
+  workflow_dispatch:
 
 jobs:
   # ---- バックエンド: Pythonテスト ----
