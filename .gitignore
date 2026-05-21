@@ -1,0 +1,45 @@
+# =====================================================
+# あおいレールプランナー .gitignore
+# =====================================================
+
+# --- 機密情報 ---
+.env
+backend_azure_functions/local.settings.json
+*.key
+*.pem
+
+# --- Flutter ---
+frontend_flutter/.dart_tool/
+frontend_flutter/.flutter-plugins
+frontend_flutter/.flutter-plugins-dependencies
+frontend_flutter/.packages
+frontend_flutter/build/
+frontend_flutter/android/.gradle/
+frontend_flutter/android/local.properties
+frontend_flutter/android/key.properties
+frontend_flutter/ios/Pods/
+frontend_flutter/ios/.symlinks/
+frontend_flutter/ios/Flutter/flutter_export_environment.sh
+frontend_flutter/*.iml
+
+# --- Python / Azure Functions ---
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+backend_azure_functions/.python_packages/
+backend_azure_functions/__pycache__/
+
+# --- TFLite モデル (LFS管理推奨) ---
+frontend_flutter/assets/models/rail_detector.tflite
+tools/train/output/
+
+# --- IDE ---
+.vscode/settings.json
+.idea/
+*.swp
+
+# --- OS ---
+.DS_Store
+Thumbs.db

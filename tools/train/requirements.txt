@@ -1,0 +1,12 @@
+ultralytics>=8.2.0        # YOLOv8トレーニングフレームワーク
+torch>=2.1.0              # PyTorch（GPU推奨）
+torchvision>=0.16.0
+onnx>=1.16.0              # ONNXエクスポート用
+onnxruntime>=1.18.0       # ONNX推論テスト用
+tensorflow>=2.16.0        # TFLiteへの変換用
+pillow>=10.3.0
+opencv-python>=4.9.0
+numpy>=1.26.0
+matplotlib>=3.8.0
+pyyaml>=6.0
+tqdm>=4.66.0

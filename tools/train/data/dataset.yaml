@@ -1,0 +1,25 @@
+# あおいレールプランナー - YOLOv8 データセット定義
+path: ./data
+train: images/train
+val:   images/val
+
+nc: 14  # クラス数（RailType種類数）
+
+names:
+  0:  straight
+  1:  straight_half
+  2:  curve_r
+  3:  curve_r_large
+  4:  incline_start
+  5:  incline_middle
+  6:  incline_end
+  7:  crossing
+  8:  switch_left
+  9:  switch_right
+  10: bridge_pier_standard
+  11: bridge_pier_block
+  12: flexible
+  13: straight_double
+
+# アノテーション形式: YOLO形式 (class_id cx cy w h, 正規化座標)
+# ラベルファイルは data/labels/train/*.txt, data/labels/val/*.txt に配置

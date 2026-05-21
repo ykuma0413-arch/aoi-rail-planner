@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(Get-ChildItem -Recurse -File | Where-Object { $_.Extension -in '.py','.dart','.yaml','.json','.txt' } | Select-Object -ExpandProperty FullName | ForEach-Object { $_.Replace\\('C:\\\\Users\\\\user\\\\OneDrive\\\\ドキュメント\\\\テスト\\\\', ''\\) })",
+      "PowerShell(flutter --version 2>&1)",
+      "PowerShell(python --version 2>&1)",
+      "PowerShell(python -m pip show tflite-model-maker 2>&1)",
+      "PowerShell(winget install Google.Flutter --accept-source-agreements --accept-package-agreements 2>&1 | Tee-Object -Variable flutterInstall; Write-Output \"=== EXIT ===$\\($LASTEXITCODE\\)\")"
+    ]
+  }
+}

@@ -1,0 +1,99 @@
+name: Build Android APK
+
+# クラウドAPKビルド専用ワークフロー
+# main にプッシュ、または手動実行で APK を生成しアーティファクトに添付する。
+# シークレットが未設定でも動作する（テストビルド）。
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'frontend_flutter/**'
+      - '.github/workflows/build-apk.yml'
+  workflow_dispatch:
+    inputs:
+      api_base_url:
+        description: 'バックエンドのベースURL (例: https://your-func.azurewebsites.net/api)'
+        required: false
+        default: 'https://example.invalid/api'
+      func_key:
+        description: 'Azure Functions の関数キー'
+        required: false
+        default: ''
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.32.1'
+          channel: stable
+          cache: true
+
+      - name: Generate Android platform files
+        # `flutter create .` で lib/ は保持したまま android/ の不足ファイルを補完
+        # 自作の AndroidManifest.xml（カメラ権限入り）は退避して後で復元する
+        working-directory: frontend_flutter
+        run: |
+          MANIFEST=android/app/src/main/AndroidManifest.xml
+          if [ -f "$MANIFEST" ]; then
+            cp "$MANIFEST" /tmp/AndroidManifest.xml.bak
+          fi
+          flutter create --project-name aoi_rail_planner --org com.aoirail --platforms=android .
+          if [ -f /tmp/AndroidManifest.xml.bak ]; then
+            cp /tmp/AndroidManifest.xml.bak "$MANIFEST"
+          fi
+
+      - name: Install dependencies
+        working-directory: frontend_flutter
+        run: flutter pub get
+
+      - name: Resolve build defines
+        id: defines
+        run: |
+          API="${{ github.event.inputs.api_base_url || vars.API_BASE_URL || 'https://example.invalid/api' }}"
+          KEY="${{ github.event.inputs.func_key || secrets.FUNC_KEY || '' }}"
+          echo "api_base_url=$API" >> $GITHUB_OUTPUT
+          echo "func_key=$KEY" >> $GITHUB_OUTPUT
+
+      - name: Build debug APK
+        working-directory: frontend_flutter
+        run: |
+          flutter build apk --debug \
+            --dart-define=API_BASE_URL=${{ steps.defines.outputs.api_base_url }} \
+            --dart-define=FUNC_KEY=${{ steps.defines.outputs.func_key }}
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: aoi-rail-planner-debug-apk
+          path: frontend_flutter/build/app/outputs/flutter-apk/app-debug.apk
+          retention-days: 30
+
+      - name: Job summary
+        run: |
+          echo "## 📱 APK ビルド完了" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "ダウンロードしてスマホにインストールしてください。" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          SIZE=$(du -h frontend_flutter/build/app/outputs/flutter-apk/app-debug.apk | cut -f1)
+          echo "- ファイル: app-debug.apk ($SIZE)" >> $GITHUB_STEP_SUMMARY
+          echo "- API_BASE_URL: ${{ steps.defines.outputs.api_base_url }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### スマホへのインストール手順" >> $GITHUB_STEP_SUMMARY
+          echo "1. 上の Artifacts セクションから aoi-rail-planner-debug-apk.zip をダウンロード" >> $GITHUB_STEP_SUMMARY
+          echo "2. zip を展開して APK をスマホに転送（Googleドライブ/メール添付/USB）" >> $GITHUB_STEP_SUMMARY
+          echo "3. スマホで APK を開いてインストール（提供元不明アプリの許可が必要）" >> $GITHUB_STEP_SUMMARY
