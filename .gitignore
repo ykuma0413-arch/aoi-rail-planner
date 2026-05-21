@@ -43,3 +43,9 @@ tools/train/output/
 # --- OS ---
 .DS_Store
 Thumbs.db
+
+# 生成された APK / QR / ダウンロード（GitHub 100MB制限回避）
+aoi-rail-planner.apk
+apk_download/
+apk-qrcode.png
+*.apk

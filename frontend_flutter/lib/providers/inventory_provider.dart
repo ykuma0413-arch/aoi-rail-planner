@@ -66,6 +66,8 @@ final inventoryProvider =
   (ref) => InventoryNotifier(),
 );
 
-final totalCountProvider = Provider<int>(
-  (ref) => ref.watch(inventoryProvider.notifier).totalCount,
-);
+// inventoryProvider の "state" を watch する（notifier は不変なので watch しても再評価されない）
+final totalCountProvider = Provider<int>((ref) {
+  final items = ref.watch(inventoryProvider);
+  return items.fold<int>(0, (sum, item) => sum + item.count);
+});
