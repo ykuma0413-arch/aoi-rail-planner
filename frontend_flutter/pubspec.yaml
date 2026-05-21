@@ -17,8 +17,8 @@ dependencies:
   riverpod_annotation: ^2.3.5
 
   # カメラ & 推論
-  camera: ^0.10.5+9
-  tflite_flutter: ^0.10.4
+  camera: ^0.11.0+2
+  tflite_flutter: ^0.11.0
 
   # ローカル保存
   sqflite: ^2.3.3

@@ -57,6 +57,23 @@ jobs:
             cp /tmp/AndroidManifest.xml.bak "$MANIFEST"
           fi
 
+      - name: Patch build.gradle.kts for plugin compatibility
+        # camera_android が compileSdk=36, NDK 27.0.12077973 を要求するため上書き
+        working-directory: frontend_flutter
+        run: |
+          GRADLE=android/app/build.gradle.kts
+          echo "--- before ---"
+          cat $GRADLE
+          # compileSdk と ndkVersion を強制的に書き換える
+          sed -i 's|compileSdk = flutter.compileSdkVersion|compileSdk = 36|' $GRADLE
+          sed -i 's|ndkVersion = flutter.ndkVersion|ndkVersion = "27.0.12077973"|' $GRADLE
+          # フォールバック: 直接行が無い場合は android { ブロック先頭に追加
+          if ! grep -q "compileSdk = 36" $GRADLE; then
+            sed -i '/android {/a\    compileSdk = 36\n    ndkVersion = "27.0.12077973"' $GRADLE
+          fi
+          echo "--- after ---"
+          cat $GRADLE
+
       - name: Install dependencies
         working-directory: frontend_flutter
         run: flutter pub get
