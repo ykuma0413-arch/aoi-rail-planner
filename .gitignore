@@ -56,3 +56,10 @@ deploy.log
 publish*.log
 rebuild.log
 
+
+# Generated artifacts
+apk-qrcode*.png
+apk_download/
+*.log
+.env.azure
+
