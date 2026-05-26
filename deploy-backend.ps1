@@ -17,7 +17,7 @@ param(
     [string]$AppName = ""
 )
 
-$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Continue"
 $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("PATH","User")
 
 # ---- Auto-suffix for globally unique name ----

@@ -49,3 +49,10 @@ aoi-rail-planner.apk
 apk_download/
 apk-qrcode.png
 *.apk
+
+# Azure deployment outputs
+.env.azure
+deploy.log
+publish*.log
+rebuild.log
+

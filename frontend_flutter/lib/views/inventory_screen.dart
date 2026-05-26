@@ -10,6 +10,7 @@ import 'camera_scan_view.dart';
 import 'layout_canvas_view.dart';
 import 'suggest_screen.dart';
 import 'history_screen.dart';
+import 'widgets/mini_rail_icon.dart';
 
 const _themes = {
   'standard': '基本オーバル',
@@ -81,6 +82,8 @@ class _InventoryScreenState extends ConsumerState<InventoryScreen> {
               ],
             ),
           ),
+          // ヒント＋クイックスタート
+          _MinRequirementHint(onQuickStart: _loadRecommendedSet),
           // 在庫リスト
           Expanded(
             child: ListView.builder(
@@ -153,6 +156,24 @@ class _InventoryScreenState extends ConsumerState<InventoryScreen> {
     );
   }
 
+  void _loadRecommendedSet() {
+    // ループ閉鎖の最低要件: カーブ16本 (各22.5° × 16 = 360°) + 直線数本
+    final notifier = ref.read(inventoryProvider.notifier);
+    notifier.reset();
+    for (int i = 0; i < 16; i++) {
+      notifier.increment(RailType.curveR);
+    }
+    for (int i = 0; i < 4; i++) {
+      notifier.increment(RailType.straight);
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('おすすめ構成を読み込みました: カーブ16本 + 直線4本'),
+        duration: Duration(seconds: 2),
+      ),
+    );
+  }
+
   Future<void> _generate(BuildContext context) async {
     await ref
         .read(layoutProvider.notifier)
@@ -187,49 +208,270 @@ class _InventoryScreenState extends ConsumerState<InventoryScreen> {
   }
 }
 
+class _MinRequirementHint extends ConsumerWidget {
+  final VoidCallback onQuickStart;
+  const _MinRequirementHint({required this.onQuickStart});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final items = ref.watch(inventoryProvider);
+    final curveCount = items
+        .where((i) => [
+              RailType.curveR,
+              RailType.curveRLarge,
+              RailType.switchLeft,
+              RailType.switchRight,
+            ].contains(i.railType))
+        .fold<int>(0, (sum, i) => sum + i.count);
+
+    final isEnough = curveCount >= 16;
+    final shortage = (16 - curveCount).clamp(0, 16);
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: isEnough
+            ? const Color(0xFF4CAF50).withOpacity(0.10)
+            : const Color(0xFFFFA726).withOpacity(0.15),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: isEnough
+              ? const Color(0xFF4CAF50)
+              : const Color(0xFFFFA726),
+          width: 1,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                isEnough ? Icons.check_circle : Icons.info_outline,
+                color: isEnough
+                    ? const Color(0xFF4CAF50)
+                    : const Color(0xFFFFA726),
+                size: 20,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  isEnough
+                      ? 'カーブ系 $curveCount 本 OK！ループを閉じられます'
+                      : 'ループ完成には カーブ系レール 最低16本が必要です',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13,
+                    color: isEnough
+                        ? const Color(0xFF2E7D32)
+                        : const Color(0xFFE65100),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (!isEnough) ...[
+            const SizedBox(height: 6),
+            Text(
+              '現在: カーブ系 $curveCount 本（あと $shortage 本足りません）',
+              style: const TextStyle(fontSize: 12, color: Colors.black54),
+            ),
+            const SizedBox(height: 8),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: const Color(0xFFE65100),
+                  side: const BorderSide(color: Color(0xFFFFA726)),
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                ),
+                icon: const Icon(Icons.flash_on, size: 18),
+                label: const Text('おすすめ構成（カーブ16+直線4）を自動投入'),
+                onPressed: onQuickStart,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
 class _RailCountRow extends ConsumerWidget {
   final InventoryItem item;
 
   const _RailCountRow({required this.item});
+
+  Future<void> _showCountInput(BuildContext context, WidgetRef ref) async {
+    final controller =
+        TextEditingController(text: item.count.toString());
+    final result = await showDialog<int?>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Row(
+          children: [
+            MiniRailIcon(railType: item.railType, size: 36),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                item.railType.displayName,
+                style: const TextStyle(fontSize: 16),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TextField(
+              controller: controller,
+              keyboardType: TextInputType.number,
+              autofocus: true,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 26,
+                fontWeight: FontWeight.bold,
+              ),
+              decoration: const InputDecoration(
+                labelText: '個数',
+                suffixText: '個',
+                border: OutlineInputBorder(),
+              ),
+              onSubmitted: (v) {
+                final n = int.tryParse(v) ?? 0;
+                Navigator.of(ctx).pop(n);
+              },
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              '※ 全体合計100個まで',
+              style: TextStyle(fontSize: 12, color: Colors.black54),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(null),
+            child: const Text('キャンセル'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(0),
+            child: const Text('0 にする',
+                style: TextStyle(color: Colors.red)),
+          ),
+          FilledButton(
+            onPressed: () {
+              final n = int.tryParse(controller.text) ?? 0;
+              Navigator.of(ctx).pop(n);
+            },
+            child: const Text('決定'),
+          ),
+        ],
+      ),
+    );
+    if (result != null) {
+      ref.read(inventoryProvider.notifier).setCount(item.railType, result);
+    }
+  }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final notifier = ref.read(inventoryProvider.notifier);
     final total = ref.watch(totalCountProvider);
 
-    return ListTile(
-      dense: true,
-      title: Text(item.railType.displayName),
-      trailing: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          IconButton(
-            icon: const Icon(Icons.remove_circle_outline),
-            color: Colors.red,
-            onPressed: item.count > 0
-                ? () => notifier.decrement(item.railType)
-                : null,
-          ),
-          SizedBox(
-            width: 32,
-            child: Text(
-              '${item.count}',
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
+    return InkWell(
+      onTap: () => _showCountInput(context, ref),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+        child: Row(
+          children: [
+            // デフォルメアイコン
+            Container(
+              padding: const EdgeInsets.all(2),
+              decoration: BoxDecoration(
+                color: item.count > 0
+                    ? const Color(0xFF0072BC).withOpacity(0.06)
+                    : Colors.transparent,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: item.count > 0
+                      ? const Color(0xFF0072BC).withOpacity(0.4)
+                      : Colors.black12,
+                  width: 1,
+                ),
+              ),
+              child: MiniRailIcon(railType: item.railType, size: 40),
+            ),
+            const SizedBox(width: 12),
+            // 名前
+            Expanded(
+              child: Text(
+                item.railType.displayName,
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight:
+                      item.count > 0 ? FontWeight.w600 : FontWeight.normal,
+                  color: item.count > 0
+                      ? Colors.black87
+                      : Colors.black54,
+                ),
+                overflow: TextOverflow.ellipsis,
               ),
             ),
-          ),
-          IconButton(
-            icon: const Icon(Icons.add_circle_outline),
-            color: const Color(0xFF0072BC),
-            // 在庫上限100個ガード
-            onPressed: total < 100
-                ? () => notifier.increment(item.railType)
-                : null,
-          ),
-        ],
+            // ボタン群
+            IconButton(
+              icon: const Icon(Icons.remove_circle_outline),
+              color: Colors.red,
+              iconSize: 28,
+              padding: const EdgeInsets.all(4),
+              constraints: const BoxConstraints(),
+              onPressed: item.count > 0
+                  ? () => notifier.decrement(item.railType)
+                  : null,
+            ),
+            // 数字（タップで直接入力ダイアログ）
+            InkWell(
+              onTap: () => _showCountInput(context, ref),
+              borderRadius: BorderRadius.circular(6),
+              child: Container(
+                width: 48,
+                padding: const EdgeInsets.symmetric(vertical: 6),
+                decoration: BoxDecoration(
+                  color: item.count > 0
+                      ? const Color(0xFF0072BC).withOpacity(0.08)
+                      : Colors.grey.withOpacity(0.08),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(
+                    color: const Color(0xFF0072BC).withOpacity(0.3),
+                    width: 1,
+                  ),
+                ),
+                alignment: Alignment.center,
+                child: Text(
+                  '${item.count}',
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF0072BC),
+                  ),
+                ),
+              ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.add_circle_outline),
+              color: const Color(0xFF0072BC),
+              iconSize: 28,
+              padding: const EdgeInsets.all(4),
+              constraints: const BoxConstraints(),
+              onPressed:
+                  total < 100 ? () => notifier.increment(item.railType) : null,
+            ),
+          ],
+        ),
       ),
     );
   }

@@ -37,6 +37,23 @@ class InventoryNotifier extends StateNotifier<List<InventoryItem>> {
     ];
   }
 
+  /// 個数を直接設定する（数値入力ダイアログから呼ばれる）
+  /// 上限100個に対して他種類の合計を考慮してキャップする
+  void setCount(RailType railType, int desired) {
+    if (desired < 0) desired = 0;
+    final otherTotal = state
+        .where((i) => i.railType != railType)
+        .fold<int>(0, (sum, i) => sum + i.count);
+    final capped = desired.clamp(0, _maxTotalInventory - otherTotal);
+    state = [
+      for (final item in state)
+        if (item.railType == railType)
+          item.copyWith(count: capped)
+        else
+          item,
+    ];
+  }
+
   /// エッジAIスキャン結果を読み込む際の上限ガード
   void loadFromScan(Map<String, int> scanResult) {
     final updated = <InventoryItem>[];

@@ -346,14 +346,19 @@ async def search_layout(
 
     missing: Dict[str, int] = {}
     if not closed:
-        used = {rt: typed_inv.get(rt, 0) - v
-                for rt, v in typed_inv.items()}
-        remaining_curves = typed_inv.get(RailType.CURVE_R, 0)
-        open_count = sum(
-            len(p.joints) - 2 + 2  # rough estimate
-            for p in placed
-        ) // 4 if placed else 4
-        if remaining_curves < open_count:
-            missing[RailType.CURVE_R.value] = max(1, open_count - remaining_curves)
+        # 標準カーブ 22.5° なので 360° のループを作るには合計 16本のカーブ系レールが必要。
+        # スイッチや大カーブもカーブ角度を持つので、それらを合算してカウント。
+        curve_like_types = [
+            RailType.CURVE_R,
+            RailType.CURVE_R_LARGE,
+            RailType.SWITCH_LEFT,
+            RailType.SWITCH_RIGHT,
+        ]
+        total_curves_available = sum(
+            typed_inv.get(rt, 0) for rt in curve_like_types
+        )
+        REQUIRED_CURVES = 16
+        if total_curves_available < REQUIRED_CURVES:
+            missing[RailType.CURVE_R.value] = REQUIRED_CURVES - total_curves_available
 
     return placed_dicts, closed, missing

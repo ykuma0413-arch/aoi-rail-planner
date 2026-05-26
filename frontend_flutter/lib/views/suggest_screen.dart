@@ -44,21 +44,52 @@ class SuggestScreen extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 16),
-            // LLMコメント or エラーメッセージ
+            // メイン説明
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(12),
-                boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 4)],
+                boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 4)],
               ),
-              child: Text(
-                response?.llmComment ??
-                    errorMessage ??
-                    'もう少しパーツを追加するとレイアウトが完成します！',
-                style: const TextStyle(fontSize: 16, height: 1.5),
-                textAlign: TextAlign.center,
+              child: Column(
+                children: [
+                  if (errorMessage != null)
+                    Text(
+                      errorMessage!,
+                      style: const TextStyle(fontSize: 16, height: 1.5),
+                      textAlign: TextAlign.center,
+                    )
+                  else ...[
+                    const Text(
+                      '🔄 ループを閉じるにはレールが足りません',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFFE65100),
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'プラレール標準カーブ 1本 = 22.5° なので、'
+                      '360° の閉じたループには カーブレール最低16本 が必要です。',
+                      style: TextStyle(fontSize: 13, height: 1.6, color: Colors.black87),
+                      textAlign: TextAlign.center,
+                    ),
+                    if (response?.llmComment != null && response!.llmComment.isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      const Divider(),
+                      const SizedBox(height: 8),
+                      Text(
+                        response!.llmComment,
+                        style: const TextStyle(fontSize: 14, color: Colors.black54),
+                        textAlign: TextAlign.center,
+                      ),
+                    ],
+                  ],
+                ],
               ),
             ),
             if (missing.isNotEmpty) ...[
