@@ -71,6 +71,20 @@ class _LayoutCanvasViewState extends State<LayoutCanvasView>
   }
 }
 
+/// レール両端のジョイント情報
+class _JointPair {
+  final Offset startPos;
+  final double startOutwardAngle;
+  final Offset endPos;
+  final double endOutwardAngle;
+  const _JointPair({
+    required this.startPos,
+    required this.startOutwardAngle,
+    required this.endPos,
+    required this.endOutwardAngle,
+  });
+}
+
 class _LayoutPainter extends CustomPainter {
   final List<PlacedRail> placedRails;
   final List<MissingPart> missingParts;
@@ -128,6 +142,9 @@ class _LayoutPainter extends CustomPainter {
     }
   }
 
+  static const double _railEndInset = 7.0;  // ジョイント表示用の隙間 (canvas px)
+  static const double _jointSize = 5.5;
+
   void _drawSingleRail(Canvas canvas, Size size, PlacedRail rail, Color color) {
     final paint = Paint()
       ..color = color
@@ -138,25 +155,26 @@ class _LayoutPainter extends CustomPainter {
     final rot = rail.rotation * math.pi / 180.0;
     final origin = _toCanvas(rail.originX, rail.originY, size);
 
-    // レールの種別ごとに描画形状 + 終端ジョイント位置算出
+    // 各種別ごとに本体描画 + ジョイントの世界位置/角度を計算
     final rt = RailType.fromApiValue(rail.railType);
-    Offset? endPoint;
+    _JointPair? joints;
     if (rt == RailType.curveR || rt == RailType.curveRLarge) {
-      endPoint = _drawCurve(canvas, origin, rot, rt == RailType.curveRLarge, paint);
+      joints = _drawCurve(canvas, origin, rot, rt == RailType.curveRLarge, paint);
     } else {
-      endPoint = _drawStraightSegment(canvas, origin, rot, rt, paint);
+      joints = _drawStraightSegment(canvas, origin, rot, rt, paint);
     }
 
-    // ジョイント端点マーカー（オス=▶ / メス=⌒）を実際の凹凸イメージで描画
-    // joint 0 = メス（FEMALE）、joint 1 = オス（MALE） の規約に従う
-    paintFemaleJoint(canvas, origin, color, r: 5);
-    if (endPoint != null) {
-      paintMaleJoint(canvas, endPoint, color, r: 5);
+    // 凸凹ジョイントマーカー（rail body の inset 位置に描画 → 隙間が生まれる）
+    if (joints != null) {
+      paintFemaleJoint(canvas, joints.startPos, color,
+          outwardAngle: joints.startOutwardAngle, size: _jointSize);
+      paintMaleJoint(canvas, joints.endPos, color,
+          outwardAngle: joints.endOutwardAngle, size: _jointSize);
     }
   }
 
-  /// 直線セグメントを描画し、終点を返す
-  Offset _drawStraightSegment(
+  /// 直線セグメントを描画し、ジョイント位置・角度を返す
+  _JointPair _drawStraightSegment(
       Canvas canvas, Offset origin, double rot, RailType? rt, Paint paint) {
     double lengthMm;
     switch (rt) {
@@ -168,54 +186,63 @@ class _LayoutPainter extends CustomPainter {
         lengthMm = 106.0;
     }
     final len = lengthMm * _scale;
-    final end = origin + Offset(len * math.cos(rot), len * math.sin(rot));
+    final dir = Offset(math.cos(rot), math.sin(rot));
+    final end = origin + dir * len;
 
-    // 2本のレール（外側 + 内側）+ 枕木 で実際のプラレールっぽく描画
+    // 本体は両端を _railEndInset だけ内側に短くする → ジョイント表示用の隙間
+    final bodyStart = origin + dir * _railEndInset;
+    final bodyEnd = end - dir * _railEndInset;
+
     final perp = Offset(-math.sin(rot), math.cos(rot));
-    const gauge = 3.5; // レール間の間隔（描画上）
-    final outer1 = origin + perp * gauge;
-    final outer2 = end + perp * gauge;
-    final inner1 = origin - perp * gauge;
-    final inner2 = end - perp * gauge;
+    const gauge = 3.5;
 
     final railPaint = Paint()
       ..color = paint.color
       ..strokeWidth = 2.5
       ..strokeCap = StrokeCap.round;
-    canvas.drawLine(outer1, outer2, railPaint);
-    canvas.drawLine(inner1, inner2, railPaint);
-
-    // 中央線（本体）
-    canvas.drawLine(origin, end, paint);
+    canvas.drawLine(bodyStart + perp * gauge, bodyEnd + perp * gauge, railPaint);
+    canvas.drawLine(bodyStart - perp * gauge, bodyEnd - perp * gauge, railPaint);
+    canvas.drawLine(bodyStart, bodyEnd, paint);
 
     // 枕木
     final tiePaint = Paint()
       ..color = paint.color.withOpacity(0.5)
       ..strokeWidth = 1.5;
-    final tieCount = (lengthMm / 20).round();
+    final bodyLenMm = lengthMm - (2 * _railEndInset / _scale);
+    final tieCount = (bodyLenMm / 20).round().clamp(2, 8);
     for (int i = 1; i < tieCount; i++) {
       final t = i / tieCount;
-      final tieCenter = Offset.lerp(origin, end, t)!;
+      final tieCenter = Offset.lerp(bodyStart, bodyEnd, t)!;
       canvas.drawLine(
         tieCenter + perp * (gauge + 1.5),
         tieCenter - perp * (gauge + 1.5),
         tiePaint,
       );
     }
-    return end;
+    // ジョイント: 本体の終端位置で、外向き = レール方向の反対 (start) / 同方向 (end)
+    return _JointPair(
+      startPos: bodyStart,
+      startOutwardAngle: rot + math.pi,
+      endPos: bodyEnd,
+      endOutwardAngle: rot,
+    );
   }
 
-  /// 曲線セグメントを描画し、終点を返す
-  Offset _drawCurve(Canvas canvas, Offset origin, double rot, bool isLarge, Paint paint) {
+  /// 曲線セグメントを描画し、ジョイント位置・角度を返す
+  _JointPair _drawCurve(Canvas canvas, Offset origin, double rot, bool isLarge, Paint paint) {
     final radius = (isLarge ? 206.0 : 103.0) * _scale;
     const angleSpan = 22.5 * math.pi / 180.0;
 
-    // 円弧の中心
+    // 円弧中心
     final cx = origin.dx + radius * math.cos(rot + math.pi / 2);
     final cy = origin.dy + radius * math.sin(rot + math.pi / 2);
     final startAngle = rot - math.pi / 2;
 
-    // 外側 + 内側 + 中央 の3本で描画
+    // 弧長で inset を入れる (radian換算)
+    final arcInset = _railEndInset / radius;
+    final drawStart = startAngle + arcInset;
+    final drawSpan = angleSpan - 2 * arcInset;
+
     const gauge = 3.5;
     final rectMid = Rect.fromCircle(center: Offset(cx, cy), radius: radius);
     final rectOuter = Rect.fromCircle(center: Offset(cx, cy), radius: radius + gauge);
@@ -226,15 +253,23 @@ class _LayoutPainter extends CustomPainter {
       ..strokeWidth = 2.5
       ..strokeCap = StrokeCap.round
       ..style = PaintingStyle.stroke;
-    canvas.drawArc(rectOuter, startAngle, angleSpan, false, railPaint);
-    canvas.drawArc(rectInner, startAngle, angleSpan, false, railPaint);
-    canvas.drawArc(rectMid, startAngle, angleSpan, false, paint);
+    canvas.drawArc(rectOuter, drawStart, drawSpan, false, railPaint);
+    canvas.drawArc(rectInner, drawStart, drawSpan, false, railPaint);
+    canvas.drawArc(rectMid, drawStart, drawSpan, false, paint);
 
-    // 終点位置を計算（角度 + 半径）
-    final endAngle = startAngle + angleSpan;
-    final endX = cx + radius * math.cos(endAngle);
-    final endY = cy + radius * math.sin(endAngle);
-    return Offset(endX, endY);
+    // ジョイント位置 = inset 後の弧の両端
+    final startWorld = Offset(cx + radius * math.cos(drawStart), cy + radius * math.sin(drawStart));
+    final endWorld = Offset(cx + radius * math.cos(drawStart + drawSpan),
+        cy + radius * math.sin(drawStart + drawSpan));
+    // 接線方向 = 半径方向 + 90°
+    final tangentAtStart = drawStart + math.pi / 2;
+    final tangentAtEnd = drawStart + drawSpan + math.pi / 2;
+    return _JointPair(
+      startPos: startWorld,
+      startOutwardAngle: tangentAtStart + math.pi,  // 開始側は接線の逆方向
+      endPos: endWorld,
+      endOutwardAngle: tangentAtEnd,
+    );
   }
 
   void _drawMissingHints(Canvas canvas, Size size) {

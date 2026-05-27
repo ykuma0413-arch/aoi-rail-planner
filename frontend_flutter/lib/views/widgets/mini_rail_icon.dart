@@ -28,30 +28,80 @@ class MiniRailIcon extends StatelessWidget {
   }
 }
 
-/// レイアウト Canvas でも使う共通の描画関数（外部公開）
-void paintFemaleJoint(Canvas canvas, Offset pos, Color color, {double r = 3.5}) {
-  final p = Paint()
+/// 凹型（メス）ジョイント: U 字スロット形状（外向きに開く）
+/// [pos]: ジョイントの中心位置（世界座標）
+/// [outwardAngle]: 凹が開く方向（radians, 0 = +X）
+/// [size]: ジョイントマーカーの基本サイズ
+void paintFemaleJoint(Canvas canvas, Offset pos, Color color, {
+  double outwardAngle = math.pi,
+  double size = 4.5,
+}) {
+  final c = math.cos(outwardAngle);
+  final s = math.sin(outwardAngle);
+  final perpX = -s;
+  final perpY = c;
+
+  // 凹のサイズ: 開口幅 w、奥行き d
+  final w = size * 1.4;
+  final d = size * 1.1;
+
+  // 中心 pos の周りに U 字を描く
+  // 内側（閉じ側）: pos から -outward 方向に d/2
+  // 外側（開口側）: pos から +outward 方向に d/2
+  final innerCx = pos.dx - c * d / 2;
+  final innerCy = pos.dy - s * d / 2;
+  final outerCx = pos.dx + c * d / 2;
+  final outerCy = pos.dy + s * d / 2;
+
+  // 一方の外側→内側→反対側内側→反対側外側 と辿るパス（U字、3辺）
+  final path = Path()
+    ..moveTo(outerCx + perpX * w / 2, outerCy + perpY * w / 2)
+    ..lineTo(innerCx + perpX * w / 2, innerCy + perpY * w / 2)
+    ..lineTo(innerCx - perpX * w / 2, innerCy - perpY * w / 2)
+    ..lineTo(outerCx - perpX * w / 2, outerCy - perpY * w / 2);
+
+  final stroke = Paint()
     ..color = color
-    ..strokeWidth = 1.5
-    ..style = PaintingStyle.stroke;
-  // 左向きの U 型くぼみ
-  canvas.drawArc(
-    Rect.fromCenter(center: Offset(pos.dx + r * 0.4, pos.dy), width: r * 1.6, height: r * 2),
-    math.pi / 2,
-    math.pi,
-    false,
-    p,
-  );
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 1.8
+    ..strokeJoin = StrokeJoin.miter
+    ..strokeCap = StrokeCap.square;
+  canvas.drawPath(path, stroke);
 }
 
-void paintMaleJoint(Canvas canvas, Offset pos, Color color, {double r = 3.5}) {
-  final p = Paint()..color = color..style = PaintingStyle.fill;
+/// 凸型（オス）ジョイント: 矩形タブ突起（外向きに伸びる）
+/// [pos]: ジョイントの中心位置
+/// [outwardAngle]: 凸が突き出る方向
+void paintMaleJoint(Canvas canvas, Offset pos, Color color, {
+  double outwardAngle = 0,
+  double size = 4.5,
+}) {
+  final c = math.cos(outwardAngle);
+  final s = math.sin(outwardAngle);
+  final perpX = -s;
+  final perpY = c;
+
+  // 凸のサイズ: タブ幅 w、奥行き d（凹の内幅より少し小さく → 視覚的に隙間）
+  final w = size * 1.0;
+  final d = size * 1.1;
+
+  // 矩形タブを pos を中心に描く
+  final backCx = pos.dx - c * d / 2;
+  final backCy = pos.dy - s * d / 2;
+  final frontCx = pos.dx + c * d / 2;
+  final frontCy = pos.dy + s * d / 2;
+
   final path = Path()
-    ..moveTo(pos.dx - r * 0.3, pos.dy - r)
-    ..lineTo(pos.dx + r, pos.dy)
-    ..lineTo(pos.dx - r * 0.3, pos.dy + r)
+    ..moveTo(backCx + perpX * w / 2, backCy + perpY * w / 2)
+    ..lineTo(frontCx + perpX * w / 2, frontCy + perpY * w / 2)
+    ..lineTo(frontCx - perpX * w / 2, frontCy - perpY * w / 2)
+    ..lineTo(backCx - perpX * w / 2, backCy - perpY * w / 2)
     ..close();
-  canvas.drawPath(path, p);
+
+  final fill = Paint()
+    ..color = color
+    ..style = PaintingStyle.fill;
+  canvas.drawPath(path, fill);
 }
 
 class _RailIconPainter extends CustomPainter {
@@ -125,16 +175,17 @@ class _RailIconPainter extends CustomPainter {
     final pad = (1 - length) * w / 2 + 4;
     final mid = h / 2;
     final gap = 5.0;
-    // 2本のレール
-    c.drawLine(Offset(pad, mid - gap / 2), Offset(w - pad, mid - gap / 2), stroke);
-    c.drawLine(Offset(pad, mid + gap / 2), Offset(w - pad, mid + gap / 2), stroke);
+    const jointInset = 4.0;
+    // 2本のレール（ジョイント分内側に短く）
+    c.drawLine(Offset(pad + jointInset, mid - gap / 2), Offset(w - pad - jointInset, mid - gap / 2), stroke);
+    c.drawLine(Offset(pad + jointInset, mid + gap / 2), Offset(w - pad - jointInset, mid + gap / 2), stroke);
     // 枕木
-    _drawTies(c, Offset(pad, mid), Offset(w - pad, mid), stroke, gap + 2);
-    // ジョイント
-    paintFemaleJoint(c, Offset(pad, mid), color);
-    paintMaleJoint(c, Offset(w - pad, mid), color);
+    _drawTies(c, Offset(pad + jointInset, mid), Offset(w - pad - jointInset, mid), stroke, gap + 2);
+    // 凹（左）: 開口は -X 方向（π）
+    paintFemaleJoint(c, Offset(pad + jointInset, mid), color, outwardAngle: math.pi, size: 3.5);
+    // 凸（右）: 突起は +X 方向（0）
+    paintMaleJoint(c, Offset(w - pad - jointInset, mid), color, outwardAngle: 0, size: 3.5);
     if (doubled) {
-      // 真ん中に区切り表示
       c.drawLine(Offset(w / 2, mid - gap), Offset(w / 2, mid + gap), stroke);
     }
   }
@@ -144,24 +195,25 @@ class _RailIconPainter extends CustomPainter {
     final r = w * radius;
     final cx = -r * 0.1;
     final cy = h * 0.85;
-    // 円弧（外側）
-    final rect = Rect.fromCircle(center: Offset(cx, cy), radius: r);
-    c.drawArc(rect, -math.pi / 2, math.pi / 3, false, stroke);
-    // 内側
-    c.drawArc(
-      Rect.fromCircle(center: Offset(cx, cy), radius: r - 5),
-      -math.pi / 2,
-      math.pi / 3,
-      false,
-      stroke,
-    );
-    // ジョイント位置を弧の両端で計算
+    // 円弧内側へ短くする（隙間用）
+    final arcInset = 0.10; // ラジアン
     final startA = -math.pi / 2;
-    final endA = startA + math.pi / 3;
-    final pStart = Offset(cx + (r - 2.5) * math.cos(startA), cy + (r - 2.5) * math.sin(startA));
-    final pEnd = Offset(cx + (r - 2.5) * math.cos(endA), cy + (r - 2.5) * math.sin(endA));
-    paintFemaleJoint(c, pStart, color);
-    paintMaleJoint(c, pEnd, color);
+    final span = math.pi / 3;
+    final drawStart = startA + arcInset;
+    final drawSpan = span - 2 * arcInset;
+    c.drawArc(Rect.fromCircle(center: Offset(cx, cy), radius: r), drawStart, drawSpan, false, stroke);
+    c.drawArc(Rect.fromCircle(center: Offset(cx, cy), radius: r - 5), drawStart, drawSpan, false, stroke);
+    // ジョイント位置 = 内側にinsetした弧の端点
+    final pStart = Offset(cx + (r - 2.5) * math.cos(drawStart), cy + (r - 2.5) * math.sin(drawStart));
+    final pEnd = Offset(cx + (r - 2.5) * math.cos(drawStart + drawSpan),
+        cy + (r - 2.5) * math.sin(drawStart + drawSpan));
+    // 接線方向に対し凹は外向き、凸は前向き
+    // 弧の中心から始点への半径方向 → +90度回した方向が接線（前進方向）
+    // 始点側の凹の outward = 接線の反対（後方）
+    final tangentStart = drawStart + math.pi / 2;
+    final tangentEnd = drawStart + drawSpan + math.pi / 2;
+    paintFemaleJoint(c, pStart, color, outwardAngle: tangentStart + math.pi, size: 3.5);
+    paintMaleJoint(c, pEnd, color, outwardAngle: tangentEnd, size: 3.5);
   }
 
   void _drawCrossing(Canvas c, Size s, Paint stroke) {
@@ -169,17 +221,15 @@ class _RailIconPainter extends CustomPainter {
     final pad = 6.0;
     final mid = w / 2;
     final gap = 4.0;
-    // 横方向
-    c.drawLine(Offset(pad, mid - gap / 2), Offset(w - pad, mid - gap / 2), stroke);
-    c.drawLine(Offset(pad, mid + gap / 2), Offset(w - pad, mid + gap / 2), stroke);
-    // 縦方向
-    c.drawLine(Offset(mid - gap / 2, pad), Offset(mid - gap / 2, h - pad), stroke);
-    c.drawLine(Offset(mid + gap / 2, pad), Offset(mid + gap / 2, h - pad), stroke);
-    // 4 ジョイント
-    paintFemaleJoint(c, Offset(pad, mid), color);
-    paintMaleJoint(c, Offset(w - pad, mid), color);
-    paintFemaleJoint(c, Offset(mid, pad), color);
-    paintMaleJoint(c, Offset(mid, h - pad), color);
+    const inset = 3.5;
+    c.drawLine(Offset(pad + inset, mid - gap / 2), Offset(w - pad - inset, mid - gap / 2), stroke);
+    c.drawLine(Offset(pad + inset, mid + gap / 2), Offset(w - pad - inset, mid + gap / 2), stroke);
+    c.drawLine(Offset(mid - gap / 2, pad + inset), Offset(mid - gap / 2, h - pad - inset), stroke);
+    c.drawLine(Offset(mid + gap / 2, pad + inset), Offset(mid + gap / 2, h - pad - inset), stroke);
+    paintFemaleJoint(c, Offset(pad + inset, mid), color, outwardAngle: math.pi, size: 3.0);
+    paintMaleJoint(c, Offset(w - pad - inset, mid), color, outwardAngle: 0, size: 3.0);
+    paintFemaleJoint(c, Offset(mid, pad + inset), color, outwardAngle: -math.pi / 2, size: 3.0);
+    paintMaleJoint(c, Offset(mid, h - pad - inset), color, outwardAngle: math.pi / 2, size: 3.0);
   }
 
   void _drawSwitch(Canvas c, Size s, Paint stroke, {required bool branchUp}) {
@@ -187,20 +237,20 @@ class _RailIconPainter extends CustomPainter {
     final pad = 5.0;
     final mid = h / 2;
     final gap = 5.0;
-    // 直線部分
-    c.drawLine(Offset(pad, mid - gap / 2), Offset(w - pad, mid - gap / 2), stroke);
-    c.drawLine(Offset(pad, mid + gap / 2), Offset(w - pad, mid + gap / 2), stroke);
-    // 分岐
+    const inset = 4.0;
+    c.drawLine(Offset(pad + inset, mid - gap / 2), Offset(w - pad - inset, mid - gap / 2), stroke);
+    c.drawLine(Offset(pad + inset, mid + gap / 2), Offset(w - pad - inset, mid + gap / 2), stroke);
     final branchY = branchUp ? mid - h * 0.32 : mid + h * 0.32;
     c.drawLine(
       Offset(w * 0.35, branchUp ? mid - gap / 2 : mid + gap / 2),
-      Offset(w - pad, branchY),
+      Offset(w - pad - inset, branchY),
       stroke,
     );
-    // ジョイント
-    paintFemaleJoint(c, Offset(pad, mid), color);
-    paintMaleJoint(c, Offset(w - pad, mid), color);
-    paintMaleJoint(c, Offset(w - pad, branchY), color);
+    paintFemaleJoint(c, Offset(pad + inset, mid), color, outwardAngle: math.pi, size: 3.5);
+    paintMaleJoint(c, Offset(w - pad - inset, mid), color, outwardAngle: 0, size: 3.5);
+    final branchAngle = math.atan2(branchY - (branchUp ? mid - gap / 2 : mid + gap / 2),
+        (w - pad - inset) - w * 0.35);
+    paintMaleJoint(c, Offset(w - pad - inset, branchY), color, outwardAngle: branchAngle, size: 3.5);
   }
 
   void _drawIncline(Canvas c, Size s, Paint stroke, {required bool ascending, required bool hasStart}) {
@@ -208,13 +258,16 @@ class _RailIconPainter extends CustomPainter {
     final pad = 5.0;
     final y1 = ascending ? h - pad : pad;
     final y2 = ascending ? pad : h - pad;
-    // 2本のレールを斜めに
     final gap = 4.0;
-    c.drawLine(Offset(pad, y1 - gap / 2), Offset(w - pad, y2 - gap / 2), stroke);
-    c.drawLine(Offset(pad, y1 + gap / 2), Offset(w - pad, y2 + gap / 2), stroke);
-    // ジョイント
-    paintFemaleJoint(c, Offset(pad, y1), color);
-    paintMaleJoint(c, Offset(w - pad, y2), color);
+    const inset = 4.0;
+    // 角度方向に inset
+    final angle = math.atan2(y2 - y1, (w - 2 * pad));
+    final dx = math.cos(angle) * inset;
+    final dy = math.sin(angle) * inset;
+    c.drawLine(Offset(pad + dx, y1 - gap / 2 + dy), Offset(w - pad - dx, y2 - gap / 2 - dy), stroke);
+    c.drawLine(Offset(pad + dx, y1 + gap / 2 + dy), Offset(w - pad - dx, y2 + gap / 2 - dy), stroke);
+    paintFemaleJoint(c, Offset(pad + dx, y1 + dy), color, outwardAngle: angle + math.pi, size: 3.5);
+    paintMaleJoint(c, Offset(w - pad - dx, y2 - dy), color, outwardAngle: angle, size: 3.5);
     if (hasStart) {
       // 開始マーカー（小さい三角）
       final triPath = Path()
@@ -266,8 +319,8 @@ class _RailIconPainter extends CustomPainter {
     }
     c.drawPath(path1, stroke);
     c.drawPath(path2, stroke);
-    paintFemaleJoint(c, Offset(pad, mid), color);
-    paintMaleJoint(c, Offset(w - pad, mid), color);
+    paintFemaleJoint(c, Offset(pad, mid), color, outwardAngle: math.pi, size: 3.5);
+    paintMaleJoint(c, Offset(w - pad, mid), color, outwardAngle: 0, size: 3.5);
   }
 
   @override
