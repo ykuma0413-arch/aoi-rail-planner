@@ -13,11 +13,11 @@ on:
   workflow_dispatch:
     inputs:
       api_base_url:
-        description: 'バックエンドのベースURL (例: https://your-func.azurewebsites.net/api)'
+        description: 'バックエンドのベースURL (空欄でリポジトリ変数 vars.API_BASE_URL を使用)'
         required: false
-        default: 'https://example.invalid/api'
+        default: ''
       func_key:
-        description: 'Azure Functions の関数キー'
+        description: 'Azure Functions の関数キー (空欄でリポジトリシークレット secrets.FUNC_KEY を使用)'
         required: false
         default: ''
 
@@ -80,11 +80,20 @@ jobs:
 
       - name: Resolve build defines
         id: defines
+        env:
+          INPUT_API: ${{ github.event.inputs.api_base_url }}
+          INPUT_KEY: ${{ github.event.inputs.func_key }}
+          VAR_API:   ${{ vars.API_BASE_URL }}
+          SEC_KEY:   ${{ secrets.FUNC_KEY }}
         run: |
-          API="${{ github.event.inputs.api_base_url || vars.API_BASE_URL || 'https://example.invalid/api' }}"
-          KEY="${{ github.event.inputs.func_key || secrets.FUNC_KEY || '' }}"
+          # 優先順位: workflow_dispatch の input → リポジトリ変数/シークレット → fallback
+          API="${INPUT_API:-${VAR_API:-https://example.invalid/api}}"
+          KEY="${INPUT_KEY:-${SEC_KEY:-}}"
           echo "api_base_url=$API" >> $GITHUB_OUTPUT
           echo "func_key=$KEY" >> $GITHUB_OUTPUT
+          # 検証ログ（キーはマスクされた状態で出る）
+          echo "Resolved API_BASE_URL: $API"
+          echo "FUNC_KEY length: ${#KEY}"
 
       - name: Build debug APK
         working-directory: frontend_flutter
