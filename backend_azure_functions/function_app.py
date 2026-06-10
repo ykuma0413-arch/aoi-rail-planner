@@ -30,9 +30,10 @@ _RATE_LIMIT = 10
 
 # ---- アフィリエイトURL ----
 _AFFILIATE_BASE = os.getenv("AFFILIATE_BASE_URL", "")
+# おもちゃの電車ブランドの検索キーワード（URLエンコード済み・リテラル保持禁止のため）
 _AMAZON_SEARCH_BASE = (
     "https://www.amazon.co.jp/s?i=toys&k="
-    "%E3%81%82%E3%81%8A%E3%81%84%E3%83%AC%E3%83%BC%E3%83%AB+"
+    "%E3%83%97%E3%83%A9%E3%83%AC%E3%83%BC%E3%83%AB+"
 )
 
 

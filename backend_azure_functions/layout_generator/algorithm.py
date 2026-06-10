@@ -17,9 +17,10 @@ v1 のビームサーチは探索が浅く「単純な円しか出ない」「�
 """
 from __future__ import annotations
 
+import asyncio
 import math
 import random
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from .rail_db import RailType
 
@@ -37,6 +38,9 @@ CURVE_RADIUS: Dict[RailType, float] = {
     RailType.CURVE_R: 103.0,
     RailType.CURVE_R_LARGE: 206.0,
 }
+# 坂レール: 平面投影では直線106mm、Z レベルを ±1 変化させる
+INCLINE_LEN = 106.0
+SEARCH_TIMEOUT_S = 0.200  # 仕様 §4.3: 200ms 強制タイムアウト
 
 # 片側の直線辺の最大長 (mm)。Canvas 表示領域に収まる値。
 MAX_SIDE_MM = 1000.0
@@ -48,41 +52,60 @@ def _unit(deg: float) -> Tuple[float, float]:
 
 
 class _Walker:
-    """ピースを順に連結しながらポーズ(x, y, heading)を更新する"""
+    """ピースを順に連結しながらポーズ(x, y, heading, z)を更新する"""
 
     def __init__(self) -> None:
         self.x = 0.0
         self.y = 0.0
         self.h = 0.0
+        self.z = 0
         self.placed: List[dict] = []
         self.points: List[Tuple[float, float]] = [(0.0, 0.0)]
 
-    def add(self, rt: RailType) -> None:
+    def _emit(self, rt: RailType, z: int) -> None:
         self.placed.append({
             "rail_type": rt.value,
             "origin_x": self.x,
             "origin_y": self.y,
             "rotation": self.h % 360.0,
-            "z_level": 0,
+            "z_level": z,
         })
+
+    def _advance_straight(self, length: float) -> None:
+        ux, uy = _unit(self.h)
+        self.x += length * ux
+        self.y += length * uy
+
+    def add(self, rt: RailType) -> None:
         if rt in STRAIGHT_LEN:
-            L = STRAIGHT_LEN[rt]
-            ux, uy = _unit(self.h)
-            self.x += L * ux
-            self.y += L * uy
+            self._emit(rt, self.z)
+            self._advance_straight(STRAIGHT_LEN[rt])
         elif rt in CURVE_RADIUS:
             # 左旋回 22.5°: 中心 = pos + R*unit(h+90)
             # 新位置 = pos + R*(unit(h-90+a) - unit(h-90))
+            self._emit(rt, self.z)
             R = CURVE_RADIUS[rt]
             ux0, uy0 = _unit(self.h - 90.0)
             ux1, uy1 = _unit(self.h - 90.0 + CURVE_ANGLE)
             self.x += R * (ux1 - ux0)
             self.y += R * (uy1 - uy0)
             self.h += CURVE_ANGLE
+        elif rt == RailType.INCLINE_START:
+            self._emit(rt, self.z)
+            self._advance_straight(INCLINE_LEN)
+            self.z += 1
+        elif rt == RailType.INCLINE_END:
+            self._emit(rt, self.z)
+            self._advance_straight(INCLINE_LEN)
+            self.z -= 1
         self.points.append((self.x, self.y))
 
+    def add_pier(self, rt: RailType) -> None:
+        """現在位置に橋脚を置く（軌道ピースではないので前進しない）"""
+        self._emit(rt, 0)
+
     def is_closed(self) -> bool:
-        if math.hypot(self.x, self.y) > 1.0:
+        if math.hypot(self.x, self.y) > 1.0 or self.z != 0:
             return False
         hm = self.h % 360.0
         return hm < 0.5 or hm > 359.5
@@ -171,14 +194,63 @@ def _build_open_preview(inv: Dict[RailType, int]) -> List[dict]:
     return _rotate_and_center(w.placed, w.points, 0.0)
 
 
-async def search_layout(
+def _try_build_elevated(
+    inv: Dict[RailType, int],
+    arc: List[RailType],
+    rng: random.Random,
+) -> Optional[Tuple[List[dict], List[Tuple[float, float]]]]:
+    """
+    高架テンプレート: 片側の辺を「坂レール → 高架直線(Z=1) → 坂レール」で構成する。
+      高架側: incline_start + straight×n + incline_end  （長さ (n+2)×106）
+      平面側: straight×(n+2)                            （同じ長さ → 閉路保証）
+      橋脚  : 高架区間の各ジョイント (n+1 箇所)
+    必要条件を満たせなければ None（呼び出し側でワイドオーバルへフォールバック）。
+    """
+    if inv.get(RailType.INCLINE_START, 0) < 1 or inv.get(RailType.INCLINE_END, 0) < 1:
+        return None
+    s_avail = inv.get(RailType.STRAIGHT, 0)
+    piers_std = inv.get(RailType.BRIDGE_PIER_STANDARD, 0)
+    piers_blk = inv.get(RailType.BRIDGE_PIER_BLOCK, 0)
+    piers_total = piers_std + piers_blk
+    if s_avail < 2 or piers_total < 1:
+        return None
+
+    n_max = min((s_avail - 2) // 2, piers_total - 1, 7)
+    if n_max < 0:
+        return None
+    n = n_max  # 高架はできるだけ長く
+
+    walker = _Walker()
+    pier_queue = (
+        [RailType.BRIDGE_PIER_STANDARD] * piers_std
+        + [RailType.BRIDGE_PIER_BLOCK] * piers_blk
+    )
+
+    for rt in arc:
+        walker.add(rt)
+    # 高架側の辺
+    walker.add(RailType.INCLINE_START)
+    walker.add_pier(pier_queue.pop(0))
+    for _ in range(n):
+        walker.add(RailType.STRAIGHT)
+        walker.add_pier(pier_queue.pop(0))
+    walker.add(RailType.INCLINE_END)
+    for rt in arc:
+        walker.add(rt)
+    # 平面側の辺（高架側と同じ長さ）
+    for _ in range(n + 2):
+        walker.add(RailType.STRAIGHT)
+
+    if not walker.is_closed():
+        return None
+    return walker.placed, walker.points
+
+
+def _generate(
     inventory: Dict[str, int],
-    theme: str = "standard",
+    theme: str,
 ) -> Tuple[List[dict], bool, Dict[str, int]]:
-    """
-    レイアウト生成エントリポイント。
-    Returns: (placed_rails, is_closed_loop, missing_parts)
-    """
+    """テンプレート構成の本体（決定的・数ミリ秒で完了）"""
     inv: Dict[RailType, int] = {}
     for k, v in inventory.items():
         try:
@@ -198,6 +270,17 @@ async def search_layout(
         placed = _build_open_preview(inv)
         return placed, False, {RailType.CURVE_R.value: shortage}
 
+    theta = rng.choice([i * 22.5 for i in range(16)])
+
+    # 高架テーマ: 坂レール + 橋脚があれば高架オーバルを構成
+    if theme == "elevated":
+        elevated = _try_build_elevated(inv, arc, rng)
+        if elevated is not None:
+            placed_raw, points = elevated
+            placed = _rotate_and_center(placed_raw, points, theta)
+            return placed, True, {}
+        # 坂・橋脚が足りない場合はワイドオーバルへフォールバック
+
     side = _side_pieces(inv, theme, rng)
 
     # オーバル: アーク + 辺 + アーク + 辺
@@ -206,14 +289,29 @@ async def search_layout(
     for rt in chain:
         walker.add(rt)
 
-    closed = walker.is_closed()
-    if not closed:
+    if not walker.is_closed():
         # テンプレート数学上ここには到達しないはずだが、保険として
         placed = _build_open_preview(inv)
         return placed, False, {RailType.CURVE_R.value: 1}
 
-    # ランダム回転で毎回違う見た目に
-    theta = rng.choice([i * 22.5 for i in range(16)])
     placed = _rotate_and_center(walker.placed, walker.points, theta)
-
     return placed, True, {}
+
+
+async def search_layout(
+    inventory: Dict[str, int],
+    theme: str = "standard",
+) -> Tuple[List[dict], bool, Dict[str, int]]:
+    """
+    レイアウト生成エントリポイント。
+    仕様 §4.3 に従い 200ms の強制タイムアウト付き（生成は通常数ミリ秒で完了）。
+    Returns: (placed_rails, is_closed_loop, missing_parts)
+    """
+    async def _run() -> Tuple[List[dict], bool, Dict[str, int]]:
+        return _generate(inventory, theme)
+
+    try:
+        return await asyncio.wait_for(_run(), timeout=SEARCH_TIMEOUT_S)
+    except asyncio.TimeoutError:
+        # フォールバック: 早期リターンでフロントの工事中画面へ
+        return [], False, {RailType.CURVE_R.value: REQUIRED_CURVES}

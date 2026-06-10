@@ -157,6 +157,25 @@ class _LayoutPainter extends CustomPainter {
 
     // 各種別ごとに本体描画 + ジョイントの世界位置/角度を計算
     final rt = RailType.fromApiValue(rail.railType);
+
+    // 橋脚: 軌道ピースではないので支柱マーカーとして描画してジョイントは省略
+    if (rt == RailType.bridgePierStandard || rt == RailType.bridgePierBlock) {
+      final pierRect = RRect.fromRectAndRadius(
+        Rect.fromCenter(center: origin, width: 10, height: 10),
+        const Radius.circular(2),
+      );
+      canvas.drawRRect(
+          pierRect, Paint()..color = const Color(0xFF8D9AA5));
+      canvas.drawRRect(
+        pierRect,
+        Paint()
+          ..color = Colors.black38
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1,
+      );
+      return;
+    }
+
     _JointPair? joints;
     if (rt == RailType.curveR || rt == RailType.curveRLarge) {
       joints = _drawCurve(canvas, origin, rot, rt == RailType.curveRLarge, paint);

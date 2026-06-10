@@ -16,7 +16,7 @@ import '../utils/amazon_links.dart';
 const _themes = {
   'standard': 'おまかせ',
   'figure8': 'コンパクト',
-  'elevated': 'ワイド',
+  'elevated': 'こうか（坂＋橋脚）',
 };
 
 class InventoryScreen extends ConsumerStatefulWidget {
@@ -216,12 +216,12 @@ class _MinRequirementHint extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final items = ref.watch(inventoryProvider);
+    // 生成エンジンが閉ループに使えるのは標準カーブ + 大カーブのみ
+    // （エンジン側の REQUIRED_CURVES 判定と必ず一致させること）
     final curveCount = items
         .where((i) => [
               RailType.curveR,
               RailType.curveRLarge,
-              RailType.switchLeft,
-              RailType.switchRight,
             ].contains(i.railType))
         .fold<int>(0, (sum, i) => sum + i.count);
 

@@ -12,7 +12,14 @@ async def main():
     cases = [
         ('curve16 standard', {'curve_r': 16}, 'standard'),
         ('curve16+str8 standard', {'straight': 8, 'curve_r': 16}, 'standard'),
-        ('curve16+str8 wide', {'straight': 8, 'curve_r': 16}, 'elevated'),
+        ('elevated full set',
+         {'straight': 10, 'curve_r': 16, 'incline_start': 1, 'incline_end': 1,
+          'bridge_pier_standard': 4}, 'elevated'),
+        ('elevated no piers (fallback)',
+         {'straight': 10, 'curve_r': 16, 'incline_start': 1, 'incline_end': 1}, 'elevated'),
+        ('elevated min (2str+1pier)',
+         {'straight': 2, 'curve_r': 16, 'incline_start': 1, 'incline_end': 1,
+          'bridge_pier_block': 1}, 'elevated'),
         ('compact', {'straight': 8, 'curve_r': 16, 'straight_half': 4}, 'figure8'),
         ('mixed 14std+2lg', {'curve_r': 14, 'curve_r_large': 2, 'straight': 4}, 'standard'),
         ('insufficient curve8', {'curve_r': 8, 'straight': 10}, 'standard'),
@@ -23,7 +30,9 @@ async def main():
     for name, inv, theme in cases:
         placed, closed, missing = await search_layout(inv, theme)
         tag = 'OK' if closed else 'NG'
-        print(f'[{tag}] {name:28s} rails={len(placed):3d} closed={closed} missing={missing}')
+        z_levels = sorted({p['z_level'] for p in placed}) if placed else []
+        piers = sum(1 for p in placed if 'pier' in p['rail_type'])
+        print(f'[{tag}] {name:30s} rails={len(placed):3d} closed={closed} z={z_levels} piers={piers} missing={missing}')
         if placed:
             xs = [p['origin_x'] for p in placed]
             ys = [p['origin_y'] for p in placed]

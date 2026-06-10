@@ -65,6 +65,7 @@ class LayoutNotifier extends StateNotifier<LayoutState> {
 
     try {
       final uri = Uri.parse('$_apiBase/layout_generator');
+      // コールドスタート時はコンテナ起動に20秒以上かかることがあるため余裕を持たせる
       final response = await http.post(
         uri,
         headers: {
@@ -72,8 +73,12 @@ class LayoutNotifier extends StateNotifier<LayoutState> {
           if (_funcKey.isNotEmpty) 'x-functions-key': _funcKey,
         },
         body: jsonEncode(request.toJson()),
-      ).timeout(const Duration(seconds: 15));
+      ).timeout(const Duration(seconds: 40));
 
+      if (response.statusCode == 429) {
+        state = LayoutError('リクエストが集中しています。\n1分ほど待ってからもう一度お試しください。');
+        return;
+      }
       if (response.statusCode != 200) {
         state = LayoutError('サーバーエラー: ${response.statusCode}');
         return;
@@ -86,7 +91,7 @@ class LayoutNotifier extends StateNotifier<LayoutState> {
       await _saveHistory(layout);
       state = LayoutSuccess(layout);
     } catch (e) {
-      state = LayoutError('通信エラーが発生しました');
+      state = LayoutError('通信エラーが発生しました。\n電波状況を確認してもう一度お試しください。\n（初回はサーバー起動に時間がかかることがあります）');
     }
   }
 

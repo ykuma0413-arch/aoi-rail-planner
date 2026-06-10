@@ -35,9 +35,10 @@ final configProvider = FutureProvider<AppConfig>((ref) async {
 void _warmupPing() {
   Future.microtask(() async {
     try {
+      // /config は匿名アクセス可のため関数キー不要でコンテナを温められる
       await http
-          .get(Uri.parse('$_apiBase/layout_generator?warmup=1'))
-          .timeout(const Duration(seconds: 10));
+          .get(Uri.parse('$_apiBase/config'))
+          .timeout(const Duration(seconds: 20));
     } catch (_) {
       // フォールバック: Pingの失敗はサイレント無視
     }

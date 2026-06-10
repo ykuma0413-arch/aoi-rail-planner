@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
@@ -130,6 +131,12 @@ class _CameraScanViewState extends ConsumerState<CameraScanView> {
     try {
       final xfile = await _controller!.takePicture();
       Uint8List? imgBytes = await xfile.readAsBytes();
+
+      // プライバシー要件: takePicture がキャッシュ領域に書いた一時ファイルを即削除し、
+      // 画像データはメモリ上でのみ扱う
+      try {
+        await File(xfile.path).delete();
+      } catch (_) {}
 
       if (_interpreter == null) {
         // モデル未ロード時はスキャン結果なしで戻る
