@@ -44,18 +44,14 @@ jobs:
           cache: true
 
       - name: Generate Android platform files
-        # `flutter create .` で lib/ は保持したまま android/ の不足ファイルを補完
-        # 自作の AndroidManifest.xml（カメラ権限入り）は退避して後で復元する
+        # `flutter create .` で lib/ は保持したまま android/ の不足ファイルを補完。
+        # リポジトリ管理下のファイル（カメラ権限入りManifest・ランチャーアイコン等）は
+        # flutter create に上書きされるため git から復元する。
         working-directory: frontend_flutter
         run: |
-          MANIFEST=android/app/src/main/AndroidManifest.xml
-          if [ -f "$MANIFEST" ]; then
-            cp "$MANIFEST" /tmp/AndroidManifest.xml.bak
-          fi
           flutter create --project-name aoi_rail_planner --org com.aoirail --platforms=android .
-          if [ -f /tmp/AndroidManifest.xml.bak ]; then
-            cp /tmp/AndroidManifest.xml.bak "$MANIFEST"
-          fi
+          git checkout -- android/app/src/main/AndroidManifest.xml || true
+          git checkout -- android/app/src/main/res || true
 
       - name: Patch build.gradle.kts for plugin compatibility
         # camera_android が compileSdk=36, NDK 27.0.12077973 を要求するため上書き

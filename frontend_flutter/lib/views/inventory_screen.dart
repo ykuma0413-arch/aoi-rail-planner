@@ -16,7 +16,7 @@ import '../utils/amazon_links.dart';
 const _themes = {
   'standard': 'おまかせ',
   'figure8': 'コンパクト',
-  'elevated': 'こうか（坂＋橋脚）',
+  'elevated': 'こうか',
 };
 
 class InventoryScreen extends ConsumerStatefulWidget {
@@ -37,19 +37,30 @@ class _InventoryScreenState extends ConsumerState<InventoryScreen> {
     final configAsync = ref.watch(configProvider);
 
     return Scaffold(
+      backgroundColor: const Color(0xFFF7FAFD),
       appBar: AppBar(
-        title: const Text('おまかせAIレールプランナー'),
+        title: const Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.train, size: 26),
+            SizedBox(width: 8),
+            Text('AIレールプランナー',
+                style: TextStyle(fontWeight: FontWeight.bold)),
+          ],
+        ),
         backgroundColor: const Color(0xFF0072BC),
         foregroundColor: Colors.white,
         actions: [
           IconButton(
             icon: const Icon(Icons.history),
+            tooltip: 'これまでのレイアウト',
             onPressed: () => Navigator.of(context).push(
               MaterialPageRoute(builder: (_) => const HistoryScreen()),
             ),
           ),
           IconButton(
             icon: const Icon(Icons.camera_alt),
+            tooltip: 'カメラでスキャン',
             onPressed: () => Navigator.of(context).push(
               MaterialPageRoute(builder: (_) => const CameraScanView()),
             ),
@@ -67,7 +78,7 @@ class _InventoryScreenState extends ConsumerState<InventoryScreen> {
                 const Icon(Icons.inventory_2, color: Color(0xFF0072BC)),
                 const SizedBox(width: 8),
                 Text(
-                  '合計: $total / 100 個',
+                  'もっているレール: $total / 100 個',
                   style: const TextStyle(
                     fontWeight: FontWeight.bold,
                     color: Color(0xFF0072BC),
@@ -83,8 +94,16 @@ class _InventoryScreenState extends ConsumerState<InventoryScreen> {
               ],
             ),
           ),
-          // ヒント＋クイックスタート
-          _MinRequirementHint(onQuickStart: _loadRecommendedSet),
+          // 初回ウェルカム or ヒントバナー
+          if (total == 0)
+            _WelcomeCard(
+              onScan: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const CameraScanView()),
+              ),
+              onQuickStart: _loadRecommendedSet,
+            )
+          else
+            _MinRequirementHint(onQuickStart: _loadRecommendedSet),
           // 在庫リスト
           Expanded(
             child: ListView.builder(
@@ -95,39 +114,44 @@ class _InventoryScreenState extends ConsumerState<InventoryScreen> {
           ),
           // テーマ選択 + 生成ボタン
           Container(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
             decoration: const BoxDecoration(
               color: Colors.white,
               boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 8)],
             ),
             child: Column(
               children: [
-                Row(
-                  children: [
-                    const Text('テーマ: ', style: TextStyle(fontWeight: FontWeight.bold)),
-                    const SizedBox(width: 8),
-                    DropdownButton<String>(
-                      value: _selectedTheme,
-                      items: _themes.entries
-                          .map((e) => DropdownMenuItem(
-                                value: e.key,
-                                child: Text(e.value),
-                              ))
-                          .toList(),
-                      onChanged: (v) =>
-                          setState(() => _selectedTheme = v ?? 'standard'),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
+                // コースの形をセグメントで選択（タップしやすい大きさ）
                 SizedBox(
                   width: double.infinity,
+                  child: SegmentedButton<String>(
+                    segments: _themes.entries
+                        .map((e) => ButtonSegment(
+                              value: e.key,
+                              label: Text(e.value,
+                                  style: const TextStyle(fontSize: 12)),
+                            ))
+                        .toList(),
+                    selected: {_selectedTheme},
+                    showSelectedIcon: false,
+                    style: SegmentedButton.styleFrom(
+                      selectedBackgroundColor: const Color(0xFF0072BC),
+                      selectedForegroundColor: Colors.white,
+                    ),
+                    onSelectionChanged: (s) =>
+                        setState(() => _selectedTheme = s.first),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                SizedBox(
+                  width: double.infinity,
+                  height: 56,
                   child: ElevatedButton.icon(
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF0072BC),
-                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      backgroundColor: const Color(0xFFFF8F00),
+                      elevation: 3,
                       shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
+                        borderRadius: BorderRadius.circular(16),
                       ),
                     ),
                     onPressed: layoutState is LayoutLoading || total == 0
@@ -135,17 +159,24 @@ class _InventoryScreenState extends ConsumerState<InventoryScreen> {
                         : () => _generate(context),
                     icon: layoutState is LayoutLoading
                         ? const SizedBox(
-                            width: 20,
-                            height: 20,
+                            width: 22,
+                            height: 22,
                             child: CircularProgressIndicator(
-                              strokeWidth: 2,
+                              strokeWidth: 2.5,
                               color: Colors.white,
                             ),
                           )
-                        : const Icon(Icons.auto_fix_high, color: Colors.white),
+                        : const Icon(Icons.auto_awesome,
+                            color: Colors.white, size: 26),
                     label: Text(
-                      layoutState is LayoutLoading ? '生成中...' : 'AIでレイアウト生成',
-                      style: const TextStyle(fontSize: 16, color: Colors.white),
+                      layoutState is LayoutLoading
+                          ? 'AIがコースをくみたて中…'
+                          : 'コースをつくる！',
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
                     ),
                   ),
                 ),
@@ -195,7 +226,8 @@ class _InventoryScreenState extends ConsumerState<InventoryScreen> {
       } else {
         Navigator.of(context).push(
           MaterialPageRoute(
-            builder: (_) => _LayoutResultScreen(response: resp),
+            builder: (_) =>
+                _LayoutResultScreen(response: resp, theme: _selectedTheme),
           ),
         );
       }
@@ -206,6 +238,98 @@ class _InventoryScreenState extends ConsumerState<InventoryScreen> {
         ),
       );
     }
+  }
+}
+
+/// 初回起動時（在庫ゼロ）のウェルカムガイド。
+/// 5歳児の親が迷わず最初の1歩を踏み出せる2択を大きく提示する。
+class _WelcomeCard extends StatelessWidget {
+  final VoidCallback onScan;
+  final VoidCallback onQuickStart;
+
+  const _WelcomeCard({required this.onScan, required this.onQuickStart});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.fromLTRB(12, 10, 12, 4),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFFE3F2FD), Color(0xFFFFF8E1)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFF0072BC).withOpacity(0.25)),
+      ),
+      child: Column(
+        children: [
+          const Text('🚂', style: TextStyle(fontSize: 40)),
+          const SizedBox(height: 6),
+          const Text(
+            'おうちのレールでコースをつくろう！',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+              color: Color(0xFF004B87),
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'もっているレールを登録すると、AIが組み立てられるコースを考えます',
+            style: TextStyle(fontSize: 12, color: Colors.black54),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Expanded(
+                child: SizedBox(
+                  height: 48,
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF0072BC),
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    icon: const Icon(Icons.camera_alt, size: 20),
+                    label: const Text('カメラで\nスキャン',
+                        style: TextStyle(fontSize: 12, height: 1.2),
+                        textAlign: TextAlign.center),
+                    onPressed: onScan,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: SizedBox(
+                  height: 48,
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFFFF8F00),
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    icon: const Icon(Icons.flash_on, size: 20),
+                    label: const Text('おためし\nセット',
+                        style: TextStyle(fontSize: 12, height: 1.2),
+                        textAlign: TextAlign.center),
+                    onPressed: onQuickStart,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
   }
 }
 
@@ -489,16 +613,48 @@ class _RailCountRow extends ConsumerWidget {
   }
 }
 
-class _LayoutResultScreen extends StatelessWidget {
+class _LayoutResultScreen extends ConsumerStatefulWidget {
   final LayoutResponse response;
+  final String theme;
 
-  const _LayoutResultScreen({required this.response});
+  const _LayoutResultScreen({required this.response, required this.theme});
+
+  @override
+  ConsumerState<_LayoutResultScreen> createState() =>
+      _LayoutResultScreenState();
+}
+
+class _LayoutResultScreenState extends ConsumerState<_LayoutResultScreen> {
+  bool _regenerating = false;
+
+  /// 同じ在庫でもう一度生成（エンジンは毎回違う形を返す）
+  Future<void> _regenerate() async {
+    setState(() => _regenerating = true);
+    await ref.read(layoutProvider.notifier).generateLayout(widget.theme);
+    if (!mounted) return;
+    setState(() => _regenerating = false);
+
+    final state = ref.read(layoutProvider);
+    if (state is LayoutSuccess && !state.response.isSuggestedLayout) {
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(
+          builder: (_) => _LayoutResultScreen(
+              response: state.response, theme: widget.theme),
+        ),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('もう一度ためしてみてください')),
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
+    final response = widget.response;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('レイアウト完成！'),
+        title: const Text('🎉 コースかんせい！'),
         backgroundColor: const Color(0xFF0072BC),
         foregroundColor: Colors.white,
       ),
@@ -534,8 +690,56 @@ class _LayoutResultScreen extends StatelessWidget {
                     const Icon(Icons.star, color: Colors.amber),
                     const SizedBox(width: 4),
                     Text(
-                      'スコア: ${(response.score * 100).round()}点',
+                      'スコア: ${(response.score * 100).round()}点　'
+                      'つかうレール: ${response.placedRails.where((r) => !r.railType.contains('pier')).length}本',
                       style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        icon: const Icon(Icons.arrow_back, size: 20),
+                        label: const Text('もどる'),
+                        onPressed: () => Navigator.of(context).pop(),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      flex: 2,
+                      child: ElevatedButton.icon(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFFFF8F00),
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        icon: _regenerating
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                ),
+                              )
+                            : const Icon(Icons.refresh, size: 22),
+                        label: Text(
+                          _regenerating ? 'くみたて中…' : 'べつのコースにする！',
+                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                        onPressed: _regenerating ? null : _regenerate,
+                      ),
                     ),
                   ],
                 ),
