@@ -73,7 +73,7 @@ class SuggestScreen extends StatelessWidget {
                     ),
                     const SizedBox(height: 8),
                     const Text(
-                      'プラレール標準カーブ 1本 = 22.5° なので、'
+                      '標準カーブ 1本 = 22.5° なので、'
                       '360° の閉じたループには カーブレール最低16本 が必要です。',
                       style: TextStyle(fontSize: 13, height: 1.6, color: Colors.black87),
                       textAlign: TextAlign.center,

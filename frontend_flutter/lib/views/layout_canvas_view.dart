@@ -173,7 +173,10 @@ class _LayoutPainter extends CustomPainter {
     }
   }
 
-  /// 直線セグメントを描画し、ジョイント位置・角度を返す
+  // 道床（青いバンド）の描画幅。実物のレール幅 ~38mm 相当を少し強調。
+  static const double _bandWidth = 11.0;
+
+  /// 直線セグメント: 実物風の道床（バンド + 2本の溝）で描画し、ジョイント情報を返す
   _JointPair _drawStraightSegment(
       Canvas canvas, Offset origin, double rot, RailType? rt, Paint paint) {
     double lengthMm;
@@ -189,37 +192,28 @@ class _LayoutPainter extends CustomPainter {
     final dir = Offset(math.cos(rot), math.sin(rot));
     final end = origin + dir * len;
 
-    // 本体は両端を _railEndInset だけ内側に短くする → ジョイント表示用の隙間
+    // 本体は両端を _railEndInset だけ短く → ジョイント表示用の隙間
     final bodyStart = origin + dir * _railEndInset;
     final bodyEnd = end - dir * _railEndInset;
-
     final perp = Offset(-math.sin(rot), math.cos(rot));
-    const gauge = 3.5;
 
-    final railPaint = Paint()
+    // 道床ベース
+    final base = Paint()
       ..color = paint.color
-      ..strokeWidth = 2.5
-      ..strokeCap = StrokeCap.round;
-    canvas.drawLine(bodyStart + perp * gauge, bodyEnd + perp * gauge, railPaint);
-    canvas.drawLine(bodyStart - perp * gauge, bodyEnd - perp * gauge, railPaint);
-    canvas.drawLine(bodyStart, bodyEnd, paint);
+      ..strokeWidth = _bandWidth
+      ..strokeCap = StrokeCap.butt;
+    canvas.drawLine(bodyStart, bodyEnd, base);
 
-    // 枕木
-    final tiePaint = Paint()
-      ..color = paint.color.withOpacity(0.5)
-      ..strokeWidth = 1.5;
-    final bodyLenMm = lengthMm - (2 * _railEndInset / _scale);
-    final tieCount = (bodyLenMm / 20).round().clamp(2, 8);
-    for (int i = 1; i < tieCount; i++) {
-      final t = i / tieCount;
-      final tieCenter = Offset.lerp(bodyStart, bodyEnd, t)!;
-      canvas.drawLine(
-        tieCenter + perp * (gauge + 1.5),
-        tieCenter - perp * (gauge + 1.5),
-        tiePaint,
-      );
-    }
-    // ジョイント: 本体の終端位置で、外向き = レール方向の反対 (start) / 同方向 (end)
+    // 2本の溝（車輪ガイド）
+    final groove = Paint()
+      ..color = Color.lerp(paint.color, Colors.black, 0.32)!
+      ..strokeWidth = 1.5
+      ..strokeCap = StrokeCap.butt;
+    canvas.drawLine(bodyStart + perp * _bandWidth * 0.22,
+        bodyEnd + perp * _bandWidth * 0.22, groove);
+    canvas.drawLine(bodyStart - perp * _bandWidth * 0.22,
+        bodyEnd - perp * _bandWidth * 0.22, groove);
+
     return _JointPair(
       startPos: bodyStart,
       startOutwardAngle: rot + math.pi,
@@ -228,47 +222,50 @@ class _LayoutPainter extends CustomPainter {
     );
   }
 
-  /// 曲線セグメントを描画し、ジョイント位置・角度を返す
+  /// 曲線セグメント: 実物風の道床アークで描画し、ジョイント情報を返す
   _JointPair _drawCurve(Canvas canvas, Offset origin, double rot, bool isLarge, Paint paint) {
     final radius = (isLarge ? 206.0 : 103.0) * _scale;
     const angleSpan = 22.5 * math.pi / 180.0;
 
-    // 円弧中心
     final cx = origin.dx + radius * math.cos(rot + math.pi / 2);
     final cy = origin.dy + radius * math.sin(rot + math.pi / 2);
+    final center = Offset(cx, cy);
     final startAngle = rot - math.pi / 2;
 
-    // 弧長で inset を入れる (radian換算)
     final arcInset = _railEndInset / radius;
     final drawStart = startAngle + arcInset;
     final drawSpan = angleSpan - 2 * arcInset;
 
-    const gauge = 3.5;
-    final rectMid = Rect.fromCircle(center: Offset(cx, cy), radius: radius);
-    final rectOuter = Rect.fromCircle(center: Offset(cx, cy), radius: radius + gauge);
-    final rectInner = Rect.fromCircle(center: Offset(cx, cy), radius: radius - gauge);
-
-    final railPaint = Paint()
+    // 道床ベースアーク
+    final base = Paint()
       ..color = paint.color
-      ..strokeWidth = 2.5
-      ..strokeCap = StrokeCap.round
+      ..strokeWidth = _bandWidth
+      ..strokeCap = StrokeCap.butt
       ..style = PaintingStyle.stroke;
-    canvas.drawArc(rectOuter, drawStart, drawSpan, false, railPaint);
-    canvas.drawArc(rectInner, drawStart, drawSpan, false, railPaint);
-    canvas.drawArc(rectMid, drawStart, drawSpan, false, paint);
+    canvas.drawArc(
+        Rect.fromCircle(center: center, radius: radius), drawStart, drawSpan, false, base);
 
-    // ジョイント位置 = inset 後の弧の両端
-    final startWorld = Offset(cx + radius * math.cos(drawStart), cy + radius * math.sin(drawStart));
-    final endWorld = Offset(cx + radius * math.cos(drawStart + drawSpan),
-        cy + radius * math.sin(drawStart + drawSpan));
-    // 接線方向 = 半径方向 + 90°
-    final tangentAtStart = drawStart + math.pi / 2;
-    final tangentAtEnd = drawStart + drawSpan + math.pi / 2;
+    // 2本の溝アーク
+    final groove = Paint()
+      ..color = Color.lerp(paint.color, Colors.black, 0.32)!
+      ..strokeWidth = 1.5
+      ..strokeCap = StrokeCap.butt
+      ..style = PaintingStyle.stroke;
+    canvas.drawArc(Rect.fromCircle(center: center, radius: radius + _bandWidth * 0.22),
+        drawStart, drawSpan, false, groove);
+    canvas.drawArc(Rect.fromCircle(center: center, radius: radius - _bandWidth * 0.22),
+        drawStart, drawSpan, false, groove);
+
+    final startWorld = center +
+        Offset(radius * math.cos(drawStart), radius * math.sin(drawStart));
+    final endWorld = center +
+        Offset(radius * math.cos(drawStart + drawSpan),
+            radius * math.sin(drawStart + drawSpan));
     return _JointPair(
       startPos: startWorld,
-      startOutwardAngle: tangentAtStart + math.pi,  // 開始側は接線の逆方向
+      startOutwardAngle: drawStart + math.pi / 2 + math.pi,
       endPos: endWorld,
-      endOutwardAngle: tangentAtEnd,
+      endOutwardAngle: drawStart + drawSpan + math.pi / 2,
     );
   }
 
