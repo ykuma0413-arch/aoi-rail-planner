@@ -74,10 +74,11 @@ void paintFemaleJoint(Canvas canvas, Offset pos, Color color,
 
 // ============ 道床（バンド）描画ヘルパー ============
 
-Color _grooveColor(Color base) => Color.lerp(base, Colors.black, 0.32)!;
+Color grooveColorOf(Color base) => Color.lerp(base, Colors.black, 0.32)!;
 
 /// 直線の道床: ベースバンド + 2本の溝
-void _bandLine(Canvas c, Offset a, Offset b, double w, Color color) {
+/// （在庫アイコンとレイアウトCanvasで共用 = 完全に同じ見た目を保証）
+void paintBandLine(Canvas c, Offset a, Offset b, double w, Color color) {
   final base = Paint()
     ..color = color
     ..strokeWidth = w
@@ -89,7 +90,7 @@ void _bandLine(Canvas c, Offset a, Offset b, double w, Color color) {
   if (len < 0.01) return;
   final perp = Offset(-d.dy / len, d.dx / len);
   final groove = Paint()
-    ..color = _grooveColor(color)
+    ..color = grooveColorOf(color)
     ..strokeWidth = w * 0.13
     ..strokeCap = StrokeCap.butt;
   c.drawLine(a + perp * w * 0.22, b + perp * w * 0.22, groove);
@@ -97,7 +98,8 @@ void _bandLine(Canvas c, Offset a, Offset b, double w, Color color) {
 }
 
 /// 曲線の道床: ベースアーク + 2本の溝アーク
-void _bandArc(Canvas c, Offset center, double r, double start, double sweep,
+/// （在庫アイコンとレイアウトCanvasで共用）
+void paintBandArc(Canvas c, Offset center, double r, double start, double sweep,
     double w, Color color) {
   final base = Paint()
     ..color = color
@@ -107,7 +109,7 @@ void _bandArc(Canvas c, Offset center, double r, double start, double sweep,
   c.drawArc(Rect.fromCircle(center: center, radius: r), start, sweep, false, base);
 
   final groove = Paint()
-    ..color = _grooveColor(color)
+    ..color = grooveColorOf(color)
     ..strokeWidth = w * 0.13
     ..strokeCap = StrokeCap.butt
     ..style = PaintingStyle.stroke;
@@ -116,6 +118,13 @@ void _bandArc(Canvas c, Offset center, double r, double start, double sweep,
   c.drawArc(Rect.fromCircle(center: center, radius: r - w * 0.22), start, sweep,
       false, groove);
 }
+
+// 旧名エイリアス（アイコンペインタ内部用）
+void _bandLine(Canvas c, Offset a, Offset b, double w, Color color) =>
+    paintBandLine(c, a, b, w, color);
+void _bandArc(Canvas c, Offset center, double r, double start, double sweep,
+        double w, Color color) =>
+    paintBandArc(c, center, r, start, sweep, w, color);
 
 // ============ アイコンペインタ ============
 
@@ -173,7 +182,7 @@ class _RailIconPainter extends CustomPainter {
       c.drawLine(
         Offset(w / 2, mid - _bw / 2),
         Offset(w / 2, mid + _bw / 2),
-        Paint()..color = _grooveColor(color)..strokeWidth = 1.2,
+        Paint()..color = grooveColorOf(color)..strokeWidth = 1.2,
       );
     }
     paintFemaleJoint(c, a, color, outwardAngle: math.pi, size: _js);
@@ -255,7 +264,7 @@ class _RailIconPainter extends CustomPainter {
     final cx = w / 2;
     final fill = Paint()..color = color;
     final stroke = Paint()
-      ..color = _grooveColor(color)
+      ..color = grooveColorOf(color)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.3;
     if (block) {

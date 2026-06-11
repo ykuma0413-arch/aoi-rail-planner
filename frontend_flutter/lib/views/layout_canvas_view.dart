@@ -29,6 +29,10 @@ class _LayoutCanvasViewState extends State<LayoutCanvasView>
     with SingleTickerProviderStateMixin {
   late AnimationController _blinkController;
   late Animation<double> _blinkAnim;
+  TransformationController? _viewController;
+
+  // キャンバスの実寸 (1800mm × スケール)
+  static const double _canvasPx = 1800.0 * _LayoutPainter.scale;
 
   @override
   void initState() {
@@ -46,25 +50,41 @@ class _LayoutCanvasViewState extends State<LayoutCanvasView>
   @override
   void dispose() {
     _blinkController.dispose();
+    _viewController?.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _blinkAnim,
-      builder: (context, _) {
-        return InteractiveViewer(
-          minScale: 0.3,
-          maxScale: 4.0,
-          child: CustomPaint(
-            size: const Size(400, 400),
-            painter: _LayoutPainter(
-              placedRails: widget.layout.placedRails,
-              missingParts: widget.layout.missingParts,
-              suggestOpacity: _blinkAnim.value,
-            ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // 初期表示でレイアウト（中央配置済み）が画面中央に来るよう平行移動
+        _viewController ??= TransformationController(
+          Matrix4.translationValues(
+            (constraints.maxWidth - _canvasPx) / 2,
+            (constraints.maxHeight - _canvasPx) / 2,
+            0,
           ),
+        );
+        return AnimatedBuilder(
+          animation: _blinkAnim,
+          builder: (context, _) {
+            return InteractiveViewer(
+              constrained: false,
+              boundaryMargin: const EdgeInsets.all(400),
+              transformationController: _viewController,
+              minScale: 0.3,
+              maxScale: 5.0,
+              child: CustomPaint(
+                size: const Size(_canvasPx, _canvasPx),
+                painter: _LayoutPainter(
+                  placedRails: widget.layout.placedRails,
+                  missingParts: widget.layout.missingParts,
+                  suggestOpacity: _blinkAnim.value,
+                ),
+              ),
+            );
+          },
         );
       },
     );
@@ -92,7 +112,10 @@ class _LayoutPainter extends CustomPainter {
 
   // グリッド原点オフセット（900mm → 表示スケール換算）
   static const double _gridOriginMm = 900.0;
-  static const double _scale = 0.25; // mm → pixel (4px = 1mm, 1800mm = 450px)
+  // 在庫アイコンと同じ「ずんぐり比率」になる拡大スケール
+  // (アイコン: 道床9px/レール長36px ≈ 0.25 → 0.42倍で 106mm = 44.5px, 道床11px)
+  static const double scale = 0.42;
+  static const double _scale = scale;
   static const double _railWidth = 6.0;
 
   _LayoutPainter({
@@ -120,7 +143,7 @@ class _LayoutPainter extends CustomPainter {
     final paint = Paint()
       ..color = Colors.grey.withOpacity(0.15)
       ..strokeWidth = 0.5;
-    const step = 20.0 * _scale; // 20mm グリッド
+    const step = 106.0 * _scale; // レール1本分 (106mm) グリッド
     for (double x = 0; x < size.width; x += step) {
       canvas.drawLine(Offset(x, 0), Offset(x, size.height), paint);
     }
@@ -142,8 +165,8 @@ class _LayoutPainter extends CustomPainter {
     }
   }
 
-  static const double _railEndInset = 7.0;  // ジョイント表示用の隙間 (canvas px)
-  static const double _jointSize = 5.5;
+  static const double _railEndInset = 8.0;  // ジョイント表示用の隙間 (canvas px)
+  static const double _jointSize = 6.0;
 
   void _drawSingleRail(Canvas canvas, Size size, PlacedRail rail, Color color) {
     final paint = Paint()
@@ -161,8 +184,8 @@ class _LayoutPainter extends CustomPainter {
     // 橋脚: 軌道ピースではないので支柱マーカーとして描画してジョイントは省略
     if (rt == RailType.bridgePierStandard || rt == RailType.bridgePierBlock) {
       final pierRect = RRect.fromRectAndRadius(
-        Rect.fromCenter(center: origin, width: 10, height: 10),
-        const Radius.circular(2),
+        Rect.fromCenter(center: origin, width: 15, height: 15),
+        const Radius.circular(3),
       );
       canvas.drawRRect(
           pierRect, Paint()..color = const Color(0xFF8D9AA5));
@@ -171,14 +194,15 @@ class _LayoutPainter extends CustomPainter {
         Paint()
           ..color = Colors.black38
           ..style = PaintingStyle.stroke
-          ..strokeWidth = 1,
+          ..strokeWidth = 1.2,
       );
       return;
     }
 
     _JointPair? joints;
     if (rt == RailType.curveR || rt == RailType.curveRLarge) {
-      joints = _drawCurve(canvas, origin, rot, rt == RailType.curveRLarge, paint);
+      joints = _drawCurve(canvas, origin, rot, rt == RailType.curveRLarge,
+          rail.flipped, paint);
     } else {
       joints = _drawStraightSegment(canvas, origin, rot, rt, paint);
     }
@@ -192,10 +216,10 @@ class _LayoutPainter extends CustomPainter {
     }
   }
 
-  // 道床（青いバンド）の描画幅。実物のレール幅 ~38mm 相当を少し強調。
+  // 道床（青いバンド）の描画幅。在庫アイコンと同じ比率。
   static const double _bandWidth = 11.0;
 
-  /// 直線セグメント: 実物風の道床（バンド + 2本の溝）で描画し、ジョイント情報を返す
+  /// 直線セグメント: 在庫アイコンと同一の paintBandLine で描画し、ジョイント情報を返す
   _JointPair _drawStraightSegment(
       Canvas canvas, Offset origin, double rot, RailType? rt, Paint paint) {
     double lengthMm;
@@ -214,24 +238,8 @@ class _LayoutPainter extends CustomPainter {
     // 本体は両端を _railEndInset だけ短く → ジョイント表示用の隙間
     final bodyStart = origin + dir * _railEndInset;
     final bodyEnd = end - dir * _railEndInset;
-    final perp = Offset(-math.sin(rot), math.cos(rot));
 
-    // 道床ベース
-    final base = Paint()
-      ..color = paint.color
-      ..strokeWidth = _bandWidth
-      ..strokeCap = StrokeCap.butt;
-    canvas.drawLine(bodyStart, bodyEnd, base);
-
-    // 2本の溝（車輪ガイド）
-    final groove = Paint()
-      ..color = Color.lerp(paint.color, Colors.black, 0.32)!
-      ..strokeWidth = 1.5
-      ..strokeCap = StrokeCap.butt;
-    canvas.drawLine(bodyStart + perp * _bandWidth * 0.22,
-        bodyEnd + perp * _bandWidth * 0.22, groove);
-    canvas.drawLine(bodyStart - perp * _bandWidth * 0.22,
-        bodyEnd - perp * _bandWidth * 0.22, groove);
+    paintBandLine(canvas, bodyStart, bodyEnd, _bandWidth, paint.color);
 
     return _JointPair(
       startPos: bodyStart,
@@ -241,39 +249,46 @@ class _LayoutPainter extends CustomPainter {
     );
   }
 
-  /// 曲線セグメント: 実物風の道床アークで描画し、ジョイント情報を返す
-  _JointPair _drawCurve(Canvas canvas, Offset origin, double rot, bool isLarge, Paint paint) {
+  /// 曲線セグメント: 在庫アイコンと同一の paintBandArc で描画し、ジョイント情報を返す。
+  /// flipped=true は右旋回（カーブの反転連結）。
+  _JointPair _drawCurve(Canvas canvas, Offset origin, double rot, bool isLarge,
+      bool flipped, Paint paint) {
     final radius = (isLarge ? 206.0 : 103.0) * _scale;
     const angleSpan = 22.5 * math.pi / 180.0;
-
-    final cx = origin.dx + radius * math.cos(rot + math.pi / 2);
-    final cy = origin.dy + radius * math.sin(rot + math.pi / 2);
-    final center = Offset(cx, cy);
-    final startAngle = rot - math.pi / 2;
-
     final arcInset = _railEndInset / radius;
-    final drawStart = startAngle + arcInset;
-    final drawSpan = angleSpan - 2 * arcInset;
 
-    // 道床ベースアーク
-    final base = Paint()
-      ..color = paint.color
-      ..strokeWidth = _bandWidth
-      ..strokeCap = StrokeCap.butt
-      ..style = PaintingStyle.stroke;
-    canvas.drawArc(
-        Rect.fromCircle(center: center, radius: radius), drawStart, drawSpan, false, base);
+    final Offset center;
+    final double drawStart;
+    final double drawSpan;
+    final double startOutward;
+    final double endOutward;
 
-    // 2本の溝アーク
-    final groove = Paint()
-      ..color = Color.lerp(paint.color, Colors.black, 0.32)!
-      ..strokeWidth = 1.5
-      ..strokeCap = StrokeCap.butt
-      ..style = PaintingStyle.stroke;
-    canvas.drawArc(Rect.fromCircle(center: center, radius: radius + _bandWidth * 0.22),
-        drawStart, drawSpan, false, groove);
-    canvas.drawArc(Rect.fromCircle(center: center, radius: radius - _bandWidth * 0.22),
-        drawStart, drawSpan, false, groove);
+    if (!flipped) {
+      // 左旋回: 中心は進行方向の左 (rot+90°)、CCW に掃引
+      center = origin +
+          Offset(radius * math.cos(rot + math.pi / 2),
+              radius * math.sin(rot + math.pi / 2));
+      final startAngle = rot - math.pi / 2;
+      drawStart = startAngle + arcInset;
+      drawSpan = angleSpan - 2 * arcInset;
+      // CCW 弧上の進行方向 = 角度 + 90°
+      startOutward = drawStart + math.pi / 2 + math.pi;
+      endOutward = drawStart + drawSpan + math.pi / 2;
+    } else {
+      // 右旋回: 中心は進行方向の右 (rot−90°)、CW（負の掃引）
+      center = origin +
+          Offset(radius * math.cos(rot - math.pi / 2),
+              radius * math.sin(rot - math.pi / 2));
+      final startAngle = rot + math.pi / 2;
+      drawStart = startAngle - arcInset;
+      drawSpan = -(angleSpan - 2 * arcInset);
+      // CW 弧上の進行方向 = 角度 − 90°
+      startOutward = drawStart - math.pi / 2 + math.pi;
+      endOutward = drawStart + drawSpan - math.pi / 2;
+    }
+
+    paintBandArc(
+        canvas, center, radius, drawStart, drawSpan, _bandWidth, paint.color);
 
     final startWorld = center +
         Offset(radius * math.cos(drawStart), radius * math.sin(drawStart));
@@ -282,9 +297,9 @@ class _LayoutPainter extends CustomPainter {
             radius * math.sin(drawStart + drawSpan));
     return _JointPair(
       startPos: startWorld,
-      startOutwardAngle: drawStart + math.pi / 2 + math.pi,
+      startOutwardAngle: startOutward,
       endPos: endWorld,
-      endOutwardAngle: drawStart + drawSpan + math.pi / 2,
+      endOutwardAngle: endOutward,
     );
   }
 

@@ -106,6 +106,7 @@ class LayoutNotifier extends StateNotifier<LayoutState> {
           'origin_y': r.originY,
           'rotation': r.rotation,
           'z_level': r.zLevel,
+          'flipped': r.flipped,
         }).toList(),
       ),
       llmComment: layout.llmComment,
