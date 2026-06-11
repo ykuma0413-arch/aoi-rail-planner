@@ -153,22 +153,79 @@ class _LayoutPainter extends CustomPainter {
   }
 
   void _drawRails(Canvas canvas, Size size) {
-    // Z=0から順に描画（高い階が上に重なる）
+    // 2パス描画:
+    //   1パス目: 全ピースの道床（Z=0から順、高い階が上に重なる）
+    //   2パス目: 全継ぎ目マーカー（後続ピースの道床に塗りつぶされないように）
     final byZ = <int, List<PlacedRail>>{};
     for (final r in placedRails) {
       byZ.putIfAbsent(r.zLevel, () => []).add(r);
     }
+
+    final connectors = <(_JointPair, Color)>[];
+    var isFirstTrackPiece = true;
+    _JointPair? firstJoints;
+    Color? firstColor;
+
     for (final z in [0, 1, 2]) {
       for (final rail in byZ[z] ?? []) {
-        _drawSingleRail(canvas, size, rail, _colorForZ(z));
+        final color = _colorForZ(z);
+        final joints = _drawRailBody(canvas, size, rail, color);
+        if (joints != null) {
+          connectors.add((joints, color));
+          if (isFirstTrackPiece) {
+            firstJoints = joints;
+            firstColor = color;
+            isFirstTrackPiece = false;
+          }
+        }
       }
+    }
+
+    // 継ぎ目: 各ピースの終端（オス側）に1個 = 連結部1箇所につき1マーカー
+    for (final (joints, color) in connectors) {
+      _drawConnector(canvas, joints.endPos, joints.endOutwardAngle, color);
+    }
+    // 開いたチェーンの先頭（メス側）にはホールを表示
+    if (firstJoints != null && firstColor != null) {
+      _drawOpenHole(canvas, firstJoints.startPos,
+          firstJoints.startOutwardAngle + math.pi, firstColor);
     }
   }
 
-  static const double _railEndInset = 8.0;  // ジョイント表示用の隙間 (canvas px)
-  static const double _jointSize = 6.0;
+  /// 連結済みの継ぎ目: 道床を横切るシームライン + ペグ円（実物を上から見た接合部）
+  void _drawConnector(Canvas canvas, Offset pos, double travelAngle, Color color) {
+    final t = Offset(math.cos(travelAngle), math.sin(travelAngle));
+    final perp = Offset(-t.dy, t.dx);
+    final seam = Paint()
+      ..color = grooveColorOf(color)
+      ..strokeWidth = 1.4;
+    canvas.drawLine(
+        pos + perp * (_bandWidth / 2), pos - perp * (_bandWidth / 2), seam);
+    // ペグ（次のレールのホールに収まった状態の小さな円）
+    final pegCenter = pos + t * 3.6;
+    canvas.drawCircle(pegCenter, 2.6, Paint()..color = grooveColorOf(color));
+    canvas.drawCircle(
+        pegCenter, 1.4, Paint()..color = Colors.white.withOpacity(0.9));
+  }
 
-  void _drawSingleRail(Canvas canvas, Size size, PlacedRail rail, Color color) {
+  /// 開いた端のメスホール（未連結を表す）
+  void _drawOpenHole(Canvas canvas, Offset pos, double intoAngle, Color color) {
+    final t = Offset(math.cos(intoAngle), math.sin(intoAngle));
+    final holeCenter = pos + t * 3.6;
+    canvas.drawCircle(holeCenter, 2.6, Paint()..color = Colors.white);
+    canvas.drawCircle(
+      holeCenter,
+      2.6,
+      Paint()
+        ..color = grooveColorOf(color)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.2,
+    );
+  }
+
+  /// ピース1個分の道床を描画し、両端のジョイント情報を返す（橋脚は null）
+  _JointPair? _drawRailBody(
+      Canvas canvas, Size size, PlacedRail rail, Color color) {
     final paint = Paint()
       ..color = color
       ..strokeWidth = _railWidth
@@ -178,10 +235,9 @@ class _LayoutPainter extends CustomPainter {
     final rot = rail.rotation * math.pi / 180.0;
     final origin = _toCanvas(rail.originX, rail.originY, size);
 
-    // 各種別ごとに本体描画 + ジョイントの世界位置/角度を計算
     final rt = RailType.fromApiValue(rail.railType);
 
-    // 橋脚: 軌道ピースではないので支柱マーカーとして描画してジョイントは省略
+    // 橋脚: 軌道ピースではないので支柱マーカーとして描画
     if (rt == RailType.bridgePierStandard || rt == RailType.bridgePierBlock) {
       final pierRect = RRect.fromRectAndRadius(
         Rect.fromCenter(center: origin, width: 15, height: 15),
@@ -196,24 +252,14 @@ class _LayoutPainter extends CustomPainter {
           ..style = PaintingStyle.stroke
           ..strokeWidth = 1.2,
       );
-      return;
+      return null;
     }
 
-    _JointPair? joints;
     if (rt == RailType.curveR || rt == RailType.curveRLarge) {
-      joints = _drawCurve(canvas, origin, rot, rt == RailType.curveRLarge,
+      return _drawCurve(canvas, origin, rot, rt == RailType.curveRLarge,
           rail.flipped, paint);
-    } else {
-      joints = _drawStraightSegment(canvas, origin, rot, rt, paint);
     }
-
-    // 凸凹ジョイントマーカー（rail body の inset 位置に描画 → 隙間が生まれる）
-    if (joints != null) {
-      paintFemaleJoint(canvas, joints.startPos, color,
-          outwardAngle: joints.startOutwardAngle, size: _jointSize);
-      paintMaleJoint(canvas, joints.endPos, color,
-          outwardAngle: joints.endOutwardAngle, size: _jointSize);
-    }
+    return _drawStraightSegment(canvas, origin, rot, rt, paint);
   }
 
   // 道床（青いバンド）の描画幅。在庫アイコンと同じ比率。
@@ -235,16 +281,13 @@ class _LayoutPainter extends CustomPainter {
     final dir = Offset(math.cos(rot), math.sin(rot));
     final end = origin + dir * len;
 
-    // 本体は両端を _railEndInset だけ短く → ジョイント表示用の隙間
-    final bodyStart = origin + dir * _railEndInset;
-    final bodyEnd = end - dir * _railEndInset;
-
-    paintBandLine(canvas, bodyStart, bodyEnd, _bandWidth, paint.color);
+    // 実物の連結済みレールと同様、道床は隙間なく連続させる
+    paintBandLine(canvas, origin, end, _bandWidth, paint.color);
 
     return _JointPair(
-      startPos: bodyStart,
+      startPos: origin,
       startOutwardAngle: rot + math.pi,
-      endPos: bodyEnd,
+      endPos: end,
       endOutwardAngle: rot,
     );
   }
@@ -255,7 +298,6 @@ class _LayoutPainter extends CustomPainter {
       bool flipped, Paint paint) {
     final radius = (isLarge ? 206.0 : 103.0) * _scale;
     const angleSpan = 22.5 * math.pi / 180.0;
-    final arcInset = _railEndInset / radius;
 
     final Offset center;
     final double drawStart;
@@ -268,9 +310,8 @@ class _LayoutPainter extends CustomPainter {
       center = origin +
           Offset(radius * math.cos(rot + math.pi / 2),
               radius * math.sin(rot + math.pi / 2));
-      final startAngle = rot - math.pi / 2;
-      drawStart = startAngle + arcInset;
-      drawSpan = angleSpan - 2 * arcInset;
+      drawStart = rot - math.pi / 2;
+      drawSpan = angleSpan;
       // CCW 弧上の進行方向 = 角度 + 90°
       startOutward = drawStart + math.pi / 2 + math.pi;
       endOutward = drawStart + drawSpan + math.pi / 2;
@@ -279,9 +320,8 @@ class _LayoutPainter extends CustomPainter {
       center = origin +
           Offset(radius * math.cos(rot - math.pi / 2),
               radius * math.sin(rot - math.pi / 2));
-      final startAngle = rot + math.pi / 2;
-      drawStart = startAngle - arcInset;
-      drawSpan = -(angleSpan - 2 * arcInset);
+      drawStart = rot + math.pi / 2;
+      drawSpan = -angleSpan;
       // CW 弧上の進行方向 = 角度 − 90°
       startOutward = drawStart - math.pi / 2 + math.pi;
       endOutward = drawStart + drawSpan - math.pi / 2;

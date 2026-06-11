@@ -23,6 +23,8 @@ PIER = (141, 154, 165)
 
 
 def draw_layout(d: ImageDraw.ImageDraw, placed, ox, oy):
+    """道床は連続バンド、継ぎ目はピース終端のペグ円1個（アプリの新描画仕様を模擬）"""
+    ends = []  # (x, y, color)
     for p in placed:
         x = ox + p["origin_x"] * SCALE
         y = oy + p["origin_y"] * SCALE
@@ -42,19 +44,28 @@ def draw_layout(d: ImageDraw.ImageDraw, placed, ox, oy):
                 cy = y + R * math.sin(rot + math.pi / 2)
                 a0 = math.degrees(rot) - 90
                 a1 = a0 + 22.5
+                end_a = math.radians(a1)
             else:
                 cx = x + R * math.cos(rot - math.pi / 2)
                 cy = y + R * math.sin(rot - math.pi / 2)
                 a1 = math.degrees(rot) + 90
                 a0 = a1 - 22.5
+                end_a = math.radians(a0)
             bbox = [cx - R, cy - R, cx + R, cy + R]
-            d.arc(bbox, a0, a1, fill=color, width=7)
+            d.arc(bbox, a0, a1, fill=color, width=8)
+            ends.append((cx + R * math.cos(end_a), cy + R * math.sin(end_a), color))
         else:
-            # 直線系 (straight / half / incline)
             L = (53.0 if rt == "straight_half" else 106.0) * SCALE
             x2 = x + L * math.cos(rot)
             y2 = y + L * math.sin(rot)
-            d.line([x, y, x2, y2], fill=color, width=7)
+            d.line([x, y, x2, y2], fill=color, width=8)
+            ends.append((x2, y2, color))
+
+    # 継ぎ目ペグ（2パス目）
+    for ex, ey, color in ends:
+        dark = tuple(int(c * 0.6) for c in color)
+        d.ellipse([ex - 2.4, ey - 2.4, ex + 2.4, ey + 2.4], fill=dark)
+        d.ellipse([ex - 1.1, ey - 1.1, ex + 1.1, ey + 1.1], fill=(255, 255, 255))
 
 
 async def main():
