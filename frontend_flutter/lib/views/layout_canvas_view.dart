@@ -354,6 +354,9 @@ class _LayoutCanvasViewState extends State<LayoutCanvasView>
   }
 }
 
+/// 描画パス: border = 白枠（下地） / fill = 青道床+溝
+enum _Pass { border, fill }
+
 /// レール両端のジョイント情報
 class _JointPair {
   final Offset startPos;
@@ -380,7 +383,8 @@ class _LayoutPainter extends CustomPainter {
   static const double scale = _kScale;
   static const double _scale = scale;
   static const double _railWidth = 6.0;
-  static const double _bandWidth = 11.0;
+  // 実物プラレール比率に寄せた道床幅（細め）。白枠を足しても突起がない分すっきり。
+  static const double _bandWidth = 9.5;
 
   _LayoutPainter({
     required this.placedRails,
@@ -401,6 +405,11 @@ class _LayoutPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
+    // プレイマット風の淡い背景（白枠を視認させるための下地）
+    canvas.drawRect(
+      Offset.zero & size,
+      Paint()..color = const Color(0xFFEAF0F6),
+    );
     _drawGrid(canvas, size);
     if (assemblyStep != null) {
       _drawRailsAssembly(canvas, size, assemblyStep!);
@@ -425,52 +434,49 @@ class _LayoutPainter extends CustomPainter {
   }
 
   // ---------- 通常表示 ----------
+  // 3パス描画で「白枠つき連続道床 + 白シーム継ぎ目」を実現する:
+  //   Pass1: 全ピースの白枠（下地）→ 連続した白いシルエット
+  //   Pass2: 全ピースの青道床+溝     → 白枠の内側に連続した青レール
+  //   Pass3: 各継ぎ目に白いシーム線  → 隙間なしでもレール境界がわかる
 
   void _drawRails(Canvas canvas, Size size) {
-    // 2パス描画: 道床全部 → 継ぎ目全部
     final byZ = <int, List<PlacedRail>>{};
     for (final r in placedRails) {
       byZ.putIfAbsent(r.zLevel, () => []).add(r);
     }
 
-    final connectors = <(_JointPair, Color)>[];
-    var isFirstTrackPiece = true;
-    _JointPair? firstJoints;
-    Color? firstColor;
-
+    // Z階層ごとに「白枠 → 青道床 → シーム」を完結させる（上階が下階に正しく重なる）
     for (final z in [0, 1, 2]) {
-      for (final rail in byZ[z] ?? []) {
-        final color = _colorForZ(z);
-        final joints = _drawRailBody(canvas, size, rail, color);
-        if (joints != null) {
-          connectors.add((joints, color));
-          if (isFirstTrackPiece) {
-            firstJoints = joints;
-            firstColor = color;
-            isFirstTrackPiece = false;
-          }
-        }
+      final rails = byZ[z];
+      if (rails == null || rails.isEmpty) continue;
+      for (final rail in rails) {
+        _renderPiece(canvas, size, rail, _colorForZ(z), _Pass.border);
       }
-    }
-
-    for (final (joints, color) in connectors) {
-      _drawConnector(canvas, joints.endPos, joints.endOutwardAngle, color);
-    }
-    if (firstJoints != null && firstColor != null) {
-      _drawOpenHole(canvas, firstJoints.startPos,
-          firstJoints.startOutwardAngle + math.pi, firstColor);
+      final joints = <_JointPair>[];
+      for (final rail in rails) {
+        final j = _renderPiece(canvas, size, rail, _colorForZ(z), _Pass.fill);
+        if (j != null) joints.add(j);
+      }
+      for (final j in joints) {
+        paintJointSeam(canvas, j.endPos, j.endOutwardAngle, _bandWidth);
+      }
     }
   }
 
   // ---------- 組み立てモード ----------
 
   void _drawRailsAssembly(Canvas canvas, Size size, int step) {
-    // チェーン順（= 組み立て順）で描画。
-    //   i < step  : 配置済み（通常色）
-    //   i == step : いまから置くピース（オレンジで明滅）
-    //   i > step  : 未配置（ゴースト）
-    final connectors = <(_JointPair, Color)>[];
-
+    // i < step  : 配置済み（白枠つき通常色）
+    // i == step : いまから置くピース（オレンジで明滅・枠なし）
+    // i > step  : 未配置（ゴースト・枠なし）
+    // Pass1: 配置済みの白枠
+    for (var i = 0; i < placedRails.length; i++) {
+      if (i >= step) continue;
+      _renderPiece(canvas, size, placedRails[i],
+          _colorForZ(placedRails[i].zLevel), _Pass.border);
+    }
+    // Pass2: 全ピースの道床（状態別の色）
+    final joints = <_JointPair>[];
     for (var i = 0; i < placedRails.length; i++) {
       final rail = placedRails[i];
       final baseColor = _colorForZ(rail.zLevel);
@@ -483,14 +489,12 @@ class _LayoutPainter extends CustomPainter {
       } else {
         color = baseColor.withOpacity(0.10);
       }
-      final joints = _drawRailBody(canvas, size, rail, color);
-      if (joints != null && i < step) {
-        connectors.add((joints, baseColor));
-      }
+      final j = _renderPiece(canvas, size, rail, color, _Pass.fill);
+      if (j != null && i < step) joints.add(j);
     }
-
-    for (final (joints, color) in connectors) {
-      _drawConnector(canvas, joints.endPos, joints.endOutwardAngle, color);
+    // Pass3: 配置済みの継ぎ目シーム
+    for (final j in joints) {
+      paintJointSeam(canvas, j.endPos, j.endOutwardAngle, _bandWidth);
     }
   }
 
@@ -549,82 +553,53 @@ class _LayoutPainter extends CustomPainter {
     }
   }
 
-  // ---------- 継ぎ目 ----------
+  // ---------- ピース本体（パス別描画） ----------
 
-  void _drawConnector(Canvas canvas, Offset pos, double travelAngle, Color color) {
-    final t = Offset(math.cos(travelAngle), math.sin(travelAngle));
-    final perp = Offset(-t.dy, t.dx);
-    final seam = Paint()
-      ..color = grooveColorOf(color)
-      ..strokeWidth = 1.4;
-    canvas.drawLine(
-        pos + perp * (_bandWidth / 2), pos - perp * (_bandWidth / 2), seam);
-    final pegCenter = pos + t * 3.6;
-    canvas.drawCircle(pegCenter, 2.6, Paint()..color = grooveColorOf(color));
-    canvas.drawCircle(
-        pegCenter, 1.4, Paint()..color = Colors.white.withOpacity(0.9));
-  }
-
-  void _drawOpenHole(Canvas canvas, Offset pos, double intoAngle, Color color) {
-    final t = Offset(math.cos(intoAngle), math.sin(intoAngle));
-    final holeCenter = pos + t * 3.6;
-    canvas.drawCircle(holeCenter, 2.6, Paint()..color = Colors.white);
-    canvas.drawCircle(
-      holeCenter,
-      2.6,
-      Paint()
-        ..color = grooveColorOf(color)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.2,
-    );
-  }
-
-  // ---------- ピース本体 ----------
-
-  _JointPair? _drawRailBody(
-      Canvas canvas, Size size, PlacedRail rail, Color color) {
-    final paint = Paint()
-      ..color = color
-      ..strokeWidth = _railWidth
-      ..strokeCap = StrokeCap.round
-      ..style = PaintingStyle.stroke;
-
+  /// 1ピースを指定パスで描画し、両端のジョイント情報を返す（橋脚は null）。
+  /// _Pass.border = 白枠のみ / _Pass.fill = 青道床+溝のみ。
+  _JointPair? _renderPiece(
+      Canvas canvas, Size size, PlacedRail rail, Color color, _Pass pass) {
     final rot = rail.rotation * math.pi / 180.0;
     final origin = _toCanvas(rail.originX, rail.originY, size);
-
     final rt = RailType.fromApiValue(rail.railType);
 
+    // 橋脚: fill パスのみ描画
     if (rt == RailType.bridgePierStandard || rt == RailType.bridgePierBlock) {
-      final pierRect = RRect.fromRectAndRadius(
-        Rect.fromCenter(center: origin, width: 15, height: 15),
-        const Radius.circular(3),
-      );
-      canvas.drawRRect(
-          pierRect, Paint()..color = const Color(0xFF8D9AA5).withOpacity(color.opacity));
-      canvas.drawRRect(
-        pierRect,
-        Paint()
-          ..color = Colors.black38.withOpacity(0.38 * color.opacity)
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.2,
-      );
+      if (pass == _Pass.fill) {
+        final pierRect = RRect.fromRectAndRadius(
+          Rect.fromCenter(center: origin, width: 15, height: 15),
+          const Radius.circular(3),
+        );
+        canvas.drawRRect(pierRect,
+            Paint()..color = const Color(0xFF8D9AA5).withOpacity(color.opacity));
+        canvas.drawRRect(
+          pierRect,
+          Paint()
+            ..color = Colors.black38.withOpacity(0.38 * color.opacity)
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 1.2,
+        );
+      }
       return null;
     }
 
     if (rt == RailType.curveR || rt == RailType.curveRLarge) {
-      return _drawCurve(canvas, origin, rot, rt == RailType.curveRLarge,
-          rail.flipped, paint);
+      return _renderCurve(
+          canvas, origin, rot, rt == RailType.curveRLarge, rail.flipped, color, pass);
     }
     if (rt == RailType.crossing) {
-      // 交差: 主軸 (origin → +106mm) + 直交軸 (中心 ±53mm)
       final dir = Offset(math.cos(rot), math.sin(rot));
       final perp = Offset(-math.sin(rot), math.cos(rot));
       final end = origin + dir * (106.0 * _scale);
       final centerPt = origin + dir * (53.0 * _scale);
       final arm = 53.0 * _scale;
-      paintBandLine(canvas, centerPt - perp * arm, centerPt + perp * arm,
-          _bandWidth, paint.color);
-      paintBandLine(canvas, origin, end, _bandWidth, paint.color);
+      if (pass == _Pass.border) {
+        paintBandBorderLine(canvas, centerPt - perp * arm, centerPt + perp * arm, _bandWidth);
+        paintBandBorderLine(canvas, origin, end, _bandWidth);
+      } else {
+        paintBandFillLine(canvas, centerPt - perp * arm, centerPt + perp * arm, _bandWidth, color);
+        paintBandFillLine(canvas, origin, end, _bandWidth, color);
+      }
       return _JointPair(
         startPos: origin,
         startOutwardAngle: rot + math.pi,
@@ -632,11 +607,11 @@ class _LayoutPainter extends CustomPainter {
         endOutwardAngle: rot,
       );
     }
-    return _drawStraightSegment(canvas, origin, rot, rt, paint);
+    return _renderStraight(canvas, origin, rot, rt, color, pass);
   }
 
-  _JointPair _drawStraightSegment(
-      Canvas canvas, Offset origin, double rot, RailType? rt, Paint paint) {
+  _JointPair _renderStraight(Canvas canvas, Offset origin, double rot,
+      RailType? rt, Color color, _Pass pass) {
     double lengthMm;
     switch (rt) {
       case RailType.straightHalf:
@@ -650,7 +625,11 @@ class _LayoutPainter extends CustomPainter {
     final dir = Offset(math.cos(rot), math.sin(rot));
     final end = origin + dir * len;
 
-    paintBandLine(canvas, origin, end, _bandWidth, paint.color);
+    if (pass == _Pass.border) {
+      paintBandBorderLine(canvas, origin, end, _bandWidth);
+    } else {
+      paintBandFillLine(canvas, origin, end, _bandWidth, color);
+    }
 
     return _JointPair(
       startPos: origin,
@@ -660,8 +639,8 @@ class _LayoutPainter extends CustomPainter {
     );
   }
 
-  _JointPair _drawCurve(Canvas canvas, Offset origin, double rot, bool isLarge,
-      bool flipped, Paint paint) {
+  _JointPair _renderCurve(Canvas canvas, Offset origin, double rot, bool isLarge,
+      bool flipped, Color color, _Pass pass) {
     final radius = (isLarge ? 206.0 : 103.0) * _scale;
     const angleSpan = 22.5 * math.pi / 180.0;
 
@@ -689,8 +668,11 @@ class _LayoutPainter extends CustomPainter {
       endOutward = drawStart + drawSpan - math.pi / 2;
     }
 
-    paintBandArc(
-        canvas, center, radius, drawStart, drawSpan, _bandWidth, paint.color);
+    if (pass == _Pass.border) {
+      paintBandBorderArc(canvas, center, radius, drawStart, drawSpan, _bandWidth);
+    } else {
+      paintBandFillArc(canvas, center, radius, drawStart, drawSpan, _bandWidth, color);
+    }
 
     final startWorld = center +
         Offset(radius * math.cos(drawStart), radius * math.sin(drawStart));

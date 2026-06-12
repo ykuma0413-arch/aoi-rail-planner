@@ -13,66 +13,103 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "backend_azure_functions")
 from PIL import Image, ImageDraw
 from layout_generator.algorithm import search_layout
 
-SCALE = 0.30  # mm -> px
-TILE = int(1800 * SCALE)  # 540
+SCALE = 0.42  # mm -> px（アプリと同じ）
+TILE = int(1800 * SCALE)
 
 RAIL_BLUE = (0, 114, 188)
-RAIL_DARK = (0, 75, 135)
 Z1 = (0, 75, 135)
 PIER = (141, 154, 165)
+WHITE = (255, 255, 255)
+
+BAND = 9.5            # 道床幅 px（アプリと同じ）
+BORDER = 2.6         # 白枠 片側 px
+
+
+def _segments(p, ox, oy):
+    """ピースを (種別, 始点, 終点, 中心, 半径, a0deg, a1deg) の描画断片に分解。
+    直線系は ('line', (x1,y1,x2,y2)) / 曲線は ('arc', bbox, a0, a1) を返す。"""
+    x = ox + p["origin_x"] * SCALE
+    y = oy + p["origin_y"] * SCALE
+    rot = math.radians(p["rotation"])
+    rt = p["rail_type"]
+    out = []
+    end = None
+    end_ang = None
+    if rt in ("curve_r", "curve_r_large"):
+        R = (103.0 if rt == "curve_r" else 206.0) * SCALE
+        if not p.get("flipped", False):
+            cx = x + R * math.cos(rot + math.pi / 2)
+            cy = y + R * math.sin(rot + math.pi / 2)
+            a0 = math.degrees(rot) - 90
+            a1 = a0 + 22.5
+            ea = math.radians(a1)
+            end_ang = rot + math.radians(22.5)
+        else:
+            cx = x + R * math.cos(rot - math.pi / 2)
+            cy = y + R * math.sin(rot - math.pi / 2)
+            a1 = math.degrees(rot) + 90
+            a0 = a1 - 22.5
+            ea = math.radians(a0)
+            end_ang = rot - math.radians(22.5)
+        out.append(("arc", (cx, cy, R), a0, a1))
+        end = (cx + R * math.cos(ea), cy + R * math.sin(ea))
+    else:
+        L = (53.0 if rt == "straight_half" else 106.0) * SCALE
+        x2 = x + L * math.cos(rot)
+        y2 = y + L * math.sin(rot)
+        out.append(("line", (x, y, x2, y2)))
+        if rt == "crossing":
+            mx, my = (x + x2) / 2, (y + y2) / 2
+            pxp, pyp = -math.sin(rot), math.cos(rot)
+            arm = 53.0 * SCALE
+            out.append(("line", (mx - pxp * arm, my - pyp * arm,
+                                  mx + pxp * arm, my + pyp * arm)))
+        end = (x2, y2)
+        end_ang = rot
+    return out, end, end_ang
+
+
+def _stroke(d, seg, width, color):
+    kind = seg[0]
+    if kind == "line":
+        d.line(seg[1], fill=color, width=int(round(width)))
+    else:
+        (cx, cy, R) = seg[1]
+        a0, a1 = seg[2], seg[3]
+        d.arc([cx - R, cy - R, cx + R, cy + R], a0, a1,
+              fill=color, width=int(round(width)))
 
 
 def draw_layout(d: ImageDraw.ImageDraw, placed, ox, oy):
-    """道床は連続バンド、継ぎ目はピース終端のペグ円1個（アプリの新描画仕様を模擬）"""
-    ends = []  # (x, y, color)
+    """アプリと同じ3パス: 白枠 → 青道床 → 白シーム"""
+    pieces = []
     for p in placed:
-        x = ox + p["origin_x"] * SCALE
-        y = oy + p["origin_y"] * SCALE
-        rot = math.radians(p["rotation"])
-        rt = p["rail_type"]
-        color = RAIL_BLUE if p["z_level"] == 0 else Z1
-        flipped = p.get("flipped", False)
-
-        if "pier" in rt:
-            d.rectangle([x - 4, y - 4, x + 4, y + 4], fill=PIER)
+        if "pier" in p["rail_type"]:
+            x = ox + p["origin_x"] * SCALE
+            y = oy + p["origin_y"] * SCALE
+            d.rectangle([x - 6, y - 6, x + 6, y + 6], fill=PIER)
             continue
+        segs, end, end_ang = _segments(p, ox, oy)
+        color = RAIL_BLUE if p["z_level"] == 0 else Z1
+        pieces.append((segs, end, end_ang, color))
 
-        if rt in ("curve_r", "curve_r_large"):
-            R = (103.0 if rt == "curve_r" else 206.0) * SCALE
-            if not flipped:
-                cx = x + R * math.cos(rot + math.pi / 2)
-                cy = y + R * math.sin(rot + math.pi / 2)
-                a0 = math.degrees(rot) - 90
-                a1 = a0 + 22.5
-                end_a = math.radians(a1)
-            else:
-                cx = x + R * math.cos(rot - math.pi / 2)
-                cy = y + R * math.sin(rot - math.pi / 2)
-                a1 = math.degrees(rot) + 90
-                a0 = a1 - 22.5
-                end_a = math.radians(a0)
-            bbox = [cx - R, cy - R, cx + R, cy + R]
-            d.arc(bbox, a0, a1, fill=color, width=8)
-            ends.append((cx + R * math.cos(end_a), cy + R * math.sin(end_a), color))
-        else:
-            L = (53.0 if rt == "straight_half" else 106.0) * SCALE
-            x2 = x + L * math.cos(rot)
-            y2 = y + L * math.sin(rot)
-            d.line([x, y, x2, y2], fill=color, width=8)
-            if rt == "crossing":
-                # 直交軸 (中心 ±53mm)
-                mx, my = (x + x2) / 2, (y + y2) / 2
-                px_, py_ = -math.sin(rot), math.cos(rot)
-                arm = 53.0 * SCALE
-                d.line([mx - px_ * arm, my - py_ * arm,
-                        mx + px_ * arm, my + py_ * arm], fill=color, width=8)
-            ends.append((x2, y2, color))
-
-    # 継ぎ目ペグ（2パス目）
-    for ex, ey, color in ends:
-        dark = tuple(int(c * 0.6) for c in color)
-        d.ellipse([ex - 2.4, ey - 2.4, ex + 2.4, ey + 2.4], fill=dark)
-        d.ellipse([ex - 1.1, ey - 1.1, ex + 1.1, ey + 1.1], fill=(255, 255, 255))
+    # Pass1: 白枠
+    for segs, _, _, _ in pieces:
+        for s in segs:
+            _stroke(d, s, BAND + BORDER * 2, WHITE)
+    # Pass2: 青道床
+    for segs, _, _, color in pieces:
+        for s in segs:
+            _stroke(d, s, BAND, color)
+    # Pass3: 白シーム（道床内のティック。白枠は割らない）
+    for _, end, end_ang, _ in pieces:
+        if end is None:
+            continue
+        ex, ey = end
+        pxp, pyp = -math.sin(end_ang), math.cos(end_ang)
+        half = BAND / 2
+        d.line([ex - pxp * half, ey - pyp * half,
+                ex + pxp * half, ey + pyp * half], fill=WHITE, width=2)
 
 
 async def main():
@@ -90,7 +127,7 @@ async def main():
     ]
 
     cols, rows = 3, 2
-    img = Image.new("RGB", (TILE * cols, TILE * rows), (250, 250, 250))
+    img = Image.new("RGB", (TILE * cols, TILE * rows), (234, 240, 246))
     d = ImageDraw.Draw(img)
 
     for i, (name, inv, theme) in enumerate(cases):

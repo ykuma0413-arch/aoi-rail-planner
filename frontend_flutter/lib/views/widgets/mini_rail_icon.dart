@@ -74,49 +74,106 @@ void paintFemaleJoint(Canvas canvas, Offset pos, Color color,
 
 // ============ 道床（バンド）描画ヘルパー ============
 
-Color grooveColorOf(Color base) => Color.lerp(base, Colors.black, 0.32)!;
+Color grooveColorOf(Color base) => Color.lerp(base, Colors.black, 0.28)!;
 
-/// 直線の道床: ベースバンド + 2本の溝
-/// （在庫アイコンとレイアウトCanvasで共用 = 完全に同じ見た目を保証）
-void paintBandLine(Canvas c, Offset a, Offset b, double w, Color color) {
-  final base = Paint()
-    ..color = color
-    ..strokeWidth = w
-    ..strokeCap = StrokeCap.butt;
-  c.drawLine(a, b, base);
+/// 道床の縁取り（白枠）の太さ（片側 px）。実物プラレールの白フチを表現。
+const double kBandBorder = 2.6;
 
+// ---- 白枠（下地）: 道床より太い白ストロークで縁取りを作る ----
+void paintBandBorderLine(Canvas c, Offset a, Offset b, double w) {
+  c.drawLine(
+      a,
+      b,
+      Paint()
+        ..color = Colors.white
+        ..strokeWidth = w + kBandBorder * 2
+        ..strokeCap = StrokeCap.round);
+}
+
+void paintBandBorderArc(
+    Canvas c, Offset center, double r, double start, double sweep, double w) {
+  c.drawArc(
+      Rect.fromCircle(center: center, radius: r),
+      start,
+      sweep,
+      false,
+      Paint()
+        ..color = Colors.white
+        ..strokeWidth = w + kBandBorder * 2
+        ..strokeCap = StrokeCap.round
+        ..style = PaintingStyle.stroke);
+}
+
+// ---- 青い道床本体 + 2本の溝（白枠の内側に重ねる） ----
+void paintBandFillLine(Canvas c, Offset a, Offset b, double w, Color color) {
+  c.drawLine(
+      a,
+      b,
+      Paint()
+        ..color = color
+        ..strokeWidth = w
+        ..strokeCap = StrokeCap.butt);
   final d = b - a;
   final len = d.distance;
   if (len < 0.01) return;
   final perp = Offset(-d.dy / len, d.dx / len);
   final groove = Paint()
     ..color = grooveColorOf(color)
-    ..strokeWidth = w * 0.13
+    ..strokeWidth = w * 0.12
     ..strokeCap = StrokeCap.butt;
-  c.drawLine(a + perp * w * 0.22, b + perp * w * 0.22, groove);
-  c.drawLine(a - perp * w * 0.22, b - perp * w * 0.22, groove);
+  c.drawLine(a + perp * w * 0.24, b + perp * w * 0.24, groove);
+  c.drawLine(a - perp * w * 0.24, b - perp * w * 0.24, groove);
 }
 
-/// 曲線の道床: ベースアーク + 2本の溝アーク
-/// （在庫アイコンとレイアウトCanvasで共用）
-void paintBandArc(Canvas c, Offset center, double r, double start, double sweep,
-    double w, Color color) {
-  final base = Paint()
-    ..color = color
-    ..strokeWidth = w
-    ..strokeCap = StrokeCap.butt
-    ..style = PaintingStyle.stroke;
-  c.drawArc(Rect.fromCircle(center: center, radius: r), start, sweep, false, base);
-
+void paintBandFillArc(Canvas c, Offset center, double r, double start,
+    double sweep, double w, Color color) {
+  c.drawArc(
+      Rect.fromCircle(center: center, radius: r),
+      start,
+      sweep,
+      false,
+      Paint()
+        ..color = color
+        ..strokeWidth = w
+        ..strokeCap = StrokeCap.butt
+        ..style = PaintingStyle.stroke);
   final groove = Paint()
     ..color = grooveColorOf(color)
-    ..strokeWidth = w * 0.13
+    ..strokeWidth = w * 0.12
     ..strokeCap = StrokeCap.butt
     ..style = PaintingStyle.stroke;
-  c.drawArc(Rect.fromCircle(center: center, radius: r + w * 0.22), start, sweep,
+  c.drawArc(Rect.fromCircle(center: center, radius: r + w * 0.24), start, sweep,
       false, groove);
-  c.drawArc(Rect.fromCircle(center: center, radius: r - w * 0.22), start, sweep,
+  c.drawArc(Rect.fromCircle(center: center, radius: r - w * 0.24), start, sweep,
       false, groove);
+}
+
+/// 継ぎ目の白いシーム線（青道床の内側を横切る = 実物の真上視点の連結部）。
+/// 白枠は連続させ、シームは道床内のティックにすることで「隙間」ではなく
+/// 「連続トラックの継ぎ目」に見せる。
+void paintJointSeam(Canvas c, Offset pos, double travelAngle, double w) {
+  final perp = Offset(-math.sin(travelAngle), math.cos(travelAngle));
+  final half = w / 2; // 道床幅のみ（白枠は割らない）
+  c.drawLine(
+      pos + perp * half,
+      pos - perp * half,
+      Paint()
+        ..color = Colors.white
+        ..strokeWidth = 2.0
+        ..strokeCap = StrokeCap.butt);
+}
+
+/// 直線レール1本（白枠+道床+溝）を単独で描く（在庫アイコン用）。
+void paintBandLine(Canvas c, Offset a, Offset b, double w, Color color) {
+  paintBandBorderLine(c, a, b, w);
+  paintBandFillLine(c, a, b, w, color);
+}
+
+/// 曲線レール1本（白枠+道床+溝）を単独で描く（在庫アイコン用）。
+void paintBandArc(Canvas c, Offset center, double r, double start, double sweep,
+    double w, Color color) {
+  paintBandBorderArc(c, center, r, start, sweep, w);
+  paintBandFillArc(c, center, r, start, sweep, w, color);
 }
 
 // 旧名エイリアス（アイコンペインタ内部用）
