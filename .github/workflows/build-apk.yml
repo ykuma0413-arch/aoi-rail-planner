@@ -124,9 +124,9 @@ jobs:
           ls -l "$KS_PATH"
 
           GRADLE=android/app/build.gradle.kts
-          # release ビルドタイプの署名をアップロード鍵に差し替える
-          sed -i 's|signingConfig = signingConfigs.getByName("debug")|signingConfig = signingConfigs.create("upload") { storeFile = file(System.getenv("KS_PATH")!!); storePassword = System.getenv("KS_PASS"); keyAlias = "upload"; keyPassword = System.getenv("KS_PASS") }|' $GRADLE
-          grep -n "signingConfigs" $GRADLE || true
+          # release ビルドタイプの署名をアップロード鍵に差し替え + TFLite 用 ProGuard ルールを適用
+          sed -i 's|signingConfig = signingConfigs.getByName("debug")|signingConfig = signingConfigs.create("upload") { storeFile = file(System.getenv("KS_PATH")!!); storePassword = System.getenv("KS_PASS"); keyAlias = "upload"; keyPassword = System.getenv("KS_PASS") }; proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")|' $GRADLE
+          grep -n "signingConfigs\|proguardFiles" $GRADLE || true
 
           flutter build apk --release \
             --dart-define=API_BASE_URL=${{ steps.defines.outputs.api_base_url }} \
