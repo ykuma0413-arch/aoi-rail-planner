@@ -74,6 +74,25 @@ class TrainPath {
   factory TrainPath.fromRails(List<PlacedRail> rails) {
     final segs = <_PathSeg>[];
     var total = 0.0;
+    Offset? prevEnd;
+
+    // 直前ピース終端と次ピース始端に隙間があれば直線でブリッジする。
+    // （交差レールの直交通過・許容誤差スナップを電車が滑らかに渡るため）
+    void addWithBridge(_PathSeg seg) {
+      final segStart = seg.posAt(0);
+      if (prevEnd != null) {
+        final gap = (segStart - prevEnd!).distance;
+        if (gap > 2.0) {
+          final dir = (segStart - prevEnd!) / gap;
+          segs.add(_PathSeg.line(prevEnd!, dir, gap));
+          total += gap;
+        }
+      }
+      segs.add(seg);
+      total += seg.length;
+      prevEnd = seg.posAt(seg.length);
+    }
+
     for (final rail in rails) {
       final rt = RailType.fromApiValue(rail.railType);
       if (rt == RailType.bridgePierStandard ||
@@ -91,14 +110,15 @@ class TrainPath {
           final center = origin +
               Offset(radius * math.cos(rot + math.pi / 2),
                   radius * math.sin(rot + math.pi / 2));
-          segs.add(_PathSeg.arc(center, radius, rot - math.pi / 2, 1, len));
+          addWithBridge(
+              _PathSeg.arc(center, radius, rot - math.pi / 2, 1, len));
         } else {
           final center = origin +
               Offset(radius * math.cos(rot - math.pi / 2),
                   radius * math.sin(rot - math.pi / 2));
-          segs.add(_PathSeg.arc(center, radius, rot + math.pi / 2, -1, len));
+          addWithBridge(
+              _PathSeg.arc(center, radius, rot + math.pi / 2, -1, len));
         }
-        total += len;
       } else {
         double mm;
         switch (rt) {
@@ -110,9 +130,18 @@ class TrainPath {
             mm = 106.0;
         }
         final len = mm * _kScale;
-        segs.add(_PathSeg.line(
+        addWithBridge(_PathSeg.line(
             origin, Offset(math.cos(rot), math.sin(rot)), len));
-        total += len;
+      }
+    }
+    // 閉ループの最終接合（許容誤差や交差通過で隙間が残る場合）もブリッジ
+    if (segs.isNotEmpty && prevEnd != null) {
+      final firstStart = segs.first.posAt(0);
+      final gap = (firstStart - prevEnd!).distance;
+      if (gap > 2.0) {
+        final dir = (firstStart - prevEnd!) / gap;
+        segs.add(_PathSeg.line(prevEnd!, dir, gap));
+        total += gap;
       }
     }
     return TrainPath._(segs, total);
@@ -585,6 +614,23 @@ class _LayoutPainter extends CustomPainter {
     if (rt == RailType.curveR || rt == RailType.curveRLarge) {
       return _drawCurve(canvas, origin, rot, rt == RailType.curveRLarge,
           rail.flipped, paint);
+    }
+    if (rt == RailType.crossing) {
+      // 交差: 主軸 (origin → +106mm) + 直交軸 (中心 ±53mm)
+      final dir = Offset(math.cos(rot), math.sin(rot));
+      final perp = Offset(-math.sin(rot), math.cos(rot));
+      final end = origin + dir * (106.0 * _scale);
+      final centerPt = origin + dir * (53.0 * _scale);
+      final arm = 53.0 * _scale;
+      paintBandLine(canvas, centerPt - perp * arm, centerPt + perp * arm,
+          _bandWidth, paint.color);
+      paintBandLine(canvas, origin, end, _bandWidth, paint.color);
+      return _JointPair(
+        startPos: origin,
+        startOutwardAngle: rot + math.pi,
+        endPos: end,
+        endOutwardAngle: rot,
+      );
     }
     return _drawStraightSegment(canvas, origin, rot, rt, paint);
   }

@@ -16,7 +16,7 @@ import '../utils/amazon_links.dart';
 
 const _themes = {
   'standard': 'おまかせ',
-  'figure8': 'コンパクト',
+  'figure8': '8の字',
   'elevated': 'こうか',
 };
 

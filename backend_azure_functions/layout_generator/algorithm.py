@@ -138,6 +138,20 @@ class _Walker:
             self._emit(rt, self.z, False)
             self._advance_straight(INCLINE_LEN)
             self.z -= 1
+        elif rt == RailType.CROSSING:
+            # 交差: 主軸を直線106mmとして通過（直交軸は snap_to で通過する）
+            self._emit(rt, self.z, False)
+            self._advance_straight(106.0)
+        self.points.append((self.x, self.y))
+
+    def snap_to(self, x: float, y: float, h: float) -> None:
+        """
+        既設ピース（交差の直交軸など）を通過する際にポーズを正確な出口へスナップする。
+        仕様 §4.1 の許容誤差内で到達していることは呼び出し側で確認すること。
+        """
+        self.x = x
+        self.y = y
+        self.h = h
         self.points.append((self.x, self.y))
 
     def add_pier(self, rt: RailType) -> None:
@@ -161,14 +175,19 @@ class _Walker:
         hm = self.h % 360.0
         return hm <= CLOSE_ANGLE_DEG or hm >= 360.0 - CLOSE_ANGLE_DEG
 
-    def no_self_intersection(self) -> bool:
-        """20mm グリッド占有で自己交差をチェック（隣接ピース・始終端の重なりは許容）"""
+    def no_self_intersection(self, exempt: frozenset = frozenset()) -> bool:
+        """
+        20mm グリッド占有で自己交差をチェック（隣接ピース・始終端の重なりは許容）。
+        exempt: 交差レールなど「他ピースとの重なりが正当」なピース番号の集合。
+        """
         n_pieces = self._piece_idx + 1
         cells: Dict[Tuple[int, int], int] = {}
         for idx, x, y in self.samples:
             cell = (int(x // GRID_MM), int(y // GRID_MM))
             prev = cells.get(cell)
             if prev is not None and prev != idx:
+                if prev in exempt or idx in exempt:
+                    continue
                 diff = abs(prev - idx)
                 if diff > 1 and diff != n_pieces - 1:  # 隣接・閉路の継ぎ目は許容
                     return False
@@ -281,6 +300,57 @@ def _try_chain(
     return walker
 
 
+def _try_build_figure8(inv: Dict[RailType, int]) -> Optional[_Walker]:
+    """
+    本物の8の字: 交差レールを中心に、左旋回ループと右旋回ループを直交させる。
+
+    幾何学的検証（机上計算済み）:
+      交差(W→E) → ハーフ → 左カーブ×12(+270°) → ハーフ → 交差の側腕(53,53)に
+      誤差(3,-3)mm で到達 → 交差を直交方向に通過(snap) → ハーフ →
+      右カーブ×12(-270°) → ハーフ → W腕(0,0)に誤差(3,-3)mm で帰着。
+      接合誤差 4.24mm ≤ 仕様許容 10mm。
+
+    必要部材: 交差1 + 標準カーブ24 + ハーフ直線4
+    """
+    if inv.get(RailType.CROSSING, 0) < 1:
+        return None
+    if inv.get(RailType.CURVE_R, 0) < 24:
+        return None
+    if inv.get(RailType.STRAIGHT_HALF, 0) < 4:
+        return None
+
+    w = _Walker()
+    w.add(RailType.CROSSING)              # idx 0: 主軸 W→E を通過
+    w.add(RailType.STRAIGHT_HALF)
+    for _ in range(12):
+        w.add(RailType.CURVE_R)           # 左ループ +270°
+    w.add(RailType.STRAIGHT_HALF)
+
+    # 交差の側腕 (53, 53) に向き 270° で到達しているか（許容誤差内）
+    if math.hypot(w.x - 53.0, w.y - 53.0) > CLOSE_DIST_MM:
+        return None
+    hm = (w.h - 270.0) % 360.0
+    if hm > CLOSE_ANGLE_DEG and hm < 360.0 - CLOSE_ANGLE_DEG:
+        return None
+
+    # 交差を直交方向に通過して反対側の腕 (53, -53) から出る
+    w.snap_to(53.0, -53.0, 270.0)
+
+    w.add(RailType.STRAIGHT_HALF)
+    for _ in range(12):
+        w.add(RailType.CURVE_R, flipped=True)   # 右ループ -270°
+    w.add(RailType.STRAIGHT_HALF)
+
+    if not w.is_closed():
+        return None
+    if w.bbox_span() > MAX_BBOX_MM:
+        return None
+    # 交差(idx 0)は他ピースと重なるのが正当
+    if not w.no_self_intersection(exempt=frozenset({0})):
+        return None
+    return w
+
+
 def _try_build_elevated(
     inv: Dict[RailType, int],
     arc: List[Piece],
@@ -370,6 +440,14 @@ def _generate(
             placed = _rotate_and_center(walker.placed, walker.points, theta)
             return placed, True, {}
         # 坂・橋脚が足りなければ通常生成へフォールバック
+
+    # 8の字テーマ: 交差レールがあれば本物の8の字を構成
+    if theme == "figure8":
+        walker = _try_build_figure8(inv)
+        if walker is not None:
+            placed = _rotate_and_center(walker.placed, walker.points, theta)
+            return placed, True, {}
+        # 部材不足ならコンパクトオーバルへフォールバック
 
     # ---- 在庫予算の計算 ----
     used_std_in_arc = sum(1 for rt, _ in arc if rt == RailType.CURVE_R) * 2

@@ -59,6 +59,13 @@ def draw_layout(d: ImageDraw.ImageDraw, placed, ox, oy):
             x2 = x + L * math.cos(rot)
             y2 = y + L * math.sin(rot)
             d.line([x, y, x2, y2], fill=color, width=8)
+            if rt == "crossing":
+                # 直交軸 (中心 ±53mm)
+                mx, my = (x + x2) / 2, (y + y2) / 2
+                px_, py_ = -math.sin(rot), math.cos(rot)
+                arm = 53.0 * SCALE
+                d.line([mx - px_ * arm, my - py_ * arm,
+                        mx + px_ * arm, my + py_ * arm], fill=color, width=8)
             ends.append((x2, y2, color))
 
     # 継ぎ目ペグ（2パス目）
@@ -70,10 +77,12 @@ def draw_layout(d: ImageDraw.ImageDraw, placed, ox, oy):
 
 async def main():
     cases = [
+        ("FIGURE-8 24c+1x+4h",
+         {"curve_r": 24, "crossing": 1, "straight_half": 4}, "figure8"),
         ("standard 24c+8s", {"curve_r": 24, "straight": 8}, "standard"),
-        ("standard 24c+8s #2", {"curve_r": 24, "straight": 8}, "standard"),
         ("standard 32c+10s", {"curve_r": 32, "straight": 10}, "standard"),
-        ("compact 20c+4h", {"curve_r": 20, "straight_half": 4}, "figure8"),
+        ("fig8 fallback (no crossing)",
+         {"curve_r": 20, "straight_half": 4}, "figure8"),
         ("elevated full", {"curve_r": 16, "straight": 10,
                            "incline_start": 1, "incline_end": 1,
                            "bridge_pier_standard": 5}, "elevated"),

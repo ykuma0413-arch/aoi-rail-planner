@@ -63,3 +63,9 @@ apk_download/
 *.log
 .env.azure
 
+
+# Android signing key (NEVER commit)
+*.p12
+keystore-password.txt
+key.properties
+

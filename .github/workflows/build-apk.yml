@@ -105,6 +105,41 @@ jobs:
           path: frontend_flutter/build/app/outputs/flutter-apk/app-debug.apk
           retention-days: 30
 
+      # ---- 署名付き release ビルド（KEYSTORE_BASE64 シークレットがある場合のみ）----
+      - name: Build signed release APK
+        id: release_build
+        continue-on-error: true
+        working-directory: frontend_flutter
+        env:
+          KS_B64: ${{ secrets.KEYSTORE_BASE64 }}
+          KS_PASS: ${{ secrets.KEYSTORE_PASSWORD }}
+          KS_PATH: /tmp/upload-keystore.p12
+        run: |
+          if [ -z "$KS_B64" ]; then
+            echo "no keystore secret - skipping release build"
+            exit 0
+          fi
+          echo "$KS_B64" | base64 -d > "$KS_PATH"
+
+          GRADLE=android/app/build.gradle.kts
+          # release ビルドタイプの署名をアップロード鍵に差し替える
+          sed -i 's|signingConfig = signingConfigs.getByName("debug")|signingConfig = signingConfigs.create("upload") { storeFile = file(System.getenv("KS_PATH")!!); storePassword = System.getenv("KS_PASS"); keyAlias = "upload"; keyPassword = System.getenv("KS_PASS") }|' $GRADLE
+          grep -n "signingConfigs" $GRADLE || true
+
+          flutter build apk --release \
+            --dart-define=API_BASE_URL=${{ steps.defines.outputs.api_base_url }} \
+            --dart-define=FUNC_KEY=${{ steps.defines.outputs.func_key }}
+          ls -lh build/app/outputs/flutter-apk/
+
+      - name: Upload release APK
+        if: steps.release_build.outcome == 'success'
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: aoi-rail-planner-release-apk
+          path: frontend_flutter/build/app/outputs/flutter-apk/app-release.apk
+          retention-days: 30
+
       - name: Job summary
         run: |
           echo "## 📱 APK ビルド完了" >> $GITHUB_STEP_SUMMARY
