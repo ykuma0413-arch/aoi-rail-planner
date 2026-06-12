@@ -119,7 +119,9 @@ jobs:
             echo "no keystore secret - skipping release build"
             exit 0
           fi
-          echo "$KS_B64" | base64 -d > "$KS_PATH"
+          # CRLF・空白が混入していても確実にデコードできるようにする
+          echo "$KS_B64" | tr -d '\r\n ' | base64 -d > "$KS_PATH"
+          ls -l "$KS_PATH"
 
           GRADLE=android/app/build.gradle.kts
           # release ビルドタイプの署名をアップロード鍵に差し替える
