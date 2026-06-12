@@ -10,6 +10,7 @@ import 'camera_scan_view.dart';
 import 'layout_canvas_view.dart';
 import 'suggest_screen.dart';
 import 'history_screen.dart';
+import 'assembly_screen.dart';
 import 'widgets/mini_rail_icon.dart';
 import '../utils/amazon_links.dart';
 
@@ -697,6 +698,32 @@ class _LayoutResultScreenState extends ConsumerState<_LayoutResultScreen> {
                   ],
                 ),
                 const SizedBox(height: 12),
+                // 最重要アクション: 組み立てガイド
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF0072BC),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 13),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    icon: const Icon(Icons.format_list_numbered, size: 22),
+                    label: const Text(
+                      'じゅんばんに くみたてる',
+                      style: TextStyle(
+                          fontSize: 16, fontWeight: FontWeight.bold),
+                    ),
+                    onPressed: () => Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => AssemblyScreen(layout: response),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
                 Row(
                   children: [
                     Expanded(
@@ -735,7 +762,7 @@ class _LayoutResultScreenState extends ConsumerState<_LayoutResultScreen> {
                               )
                             : const Icon(Icons.refresh, size: 22),
                         label: Text(
-                          _regenerating ? 'くみたて中…' : 'べつのコースにする！',
+                          _regenerating ? 'くみたて中…' : 'べつのコース！',
                           style: const TextStyle(fontWeight: FontWeight.bold),
                         ),
                         onPressed: _regenerating ? null : _regenerate,

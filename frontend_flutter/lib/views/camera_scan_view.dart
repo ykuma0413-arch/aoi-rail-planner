@@ -159,24 +159,38 @@ class _CameraScanViewState extends ConsumerState<CameraScanView> {
       }
 
       final resized = img.copyResize(decoded, width: _inputSize, height: _inputSize);
-      final inputTensor = _imageToInputTensor(resized);
 
-      final outputShape = _interpreter!.getOutputTensor(0).shape;
-      final outputBuffer = List.filled(
-        outputShape.reduce((a, b) => a * b),
-        0,
-      ).reshape(outputShape);
+      // 入力テンソル: モデルの入力型 (float32 / uint8) に合わせて構築
+      final inTensor = _interpreter!.getInputTensor(0);
+      final isFloatInput =
+          inTensor.type.toString().toLowerCase().contains('float');
+      final inputTensor = isFloatInput
+          ? _imageToFloatTensor(resized)
+          : _imageToIntTensor(resized);
+
+      // 出力テンソル: 型・形状に合わせてバッファ生成
+      final outTensor = _interpreter!.getOutputTensor(0);
+      final outputShape = outTensor.shape;
+      final isFloatOutput =
+          outTensor.type.toString().toLowerCase().contains('float');
+      final count = outputShape.reduce((a, b) => a * b);
+      final outputBuffer = (isFloatOutput
+              ? List<double>.filled(count, 0.0)
+              : List<int>.filled(count, 0))
+          .reshape(outputShape);
 
       _interpreter!.run(inputTensor, outputBuffer);
 
-      final scanResult = _parseDetections(outputBuffer);
+      final scanResult = _parseDetections(outputBuffer, outputShape);
       ref.read(inventoryProvider.notifier).loadFromScan(scanResult);
 
       if (mounted) {
+        final totalFound =
+            scanResult.values.fold<int>(0, (sum, v) => sum + v);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(scanResult.isEmpty
-              ? 'スキャン完了（検出なし: モックモデルは認識精度を持ちません）'
-              : 'スキャン完了！${scanResult.length}種類検出')),
+              ? 'レールが見つかりませんでした。明るい場所で、重ねずに広げて撮ってね'
+              : 'スキャン完了！ $totalFound 本のレールを見つけました')),
         );
         Navigator.of(context).pop();
       }
@@ -189,7 +203,7 @@ class _CameraScanViewState extends ConsumerState<CameraScanView> {
     }
   }
 
-  List<List<List<List<int>>>> _imageToInputTensor(img.Image image) {
+  List<List<List<List<int>>>> _imageToIntTensor(img.Image image) {
     return List.generate(1, (_) =>
       List.generate(_inputSize, (y) =>
         List.generate(_inputSize, (x) {
@@ -200,9 +214,102 @@ class _CameraScanViewState extends ConsumerState<CameraScanView> {
     );
   }
 
-  Map<String, int> _parseDetections(dynamic output) {
-    // 実モデル投入後にYOLO出力を解析する実装に置き換える
-    return {};
+  List<List<List<List<double>>>> _imageToFloatTensor(img.Image image) {
+    return List.generate(1, (_) =>
+      List.generate(_inputSize, (y) =>
+        List.generate(_inputSize, (x) {
+          final pixel = image.getPixel(x, y);
+          return [pixel.r / 255.0, pixel.g / 255.0, pixel.b / 255.0];
+        })
+      )
+    );
+  }
+
+  // dataset.yaml のクラス順と完全一致させること
+  static const _classNames = [
+    'straight', 'straight_half', 'curve_r', 'curve_r_large',
+    'incline_start', 'incline_middle', 'incline_end', 'crossing',
+    'switch_left', 'switch_right', 'bridge_pier_standard',
+    'bridge_pier_block', 'flexible', 'straight_double',
+  ];
+  static const _confThreshold = 0.35;
+  static const _iouThreshold = 0.50;
+
+  /// YOLOv8 TFLite 出力の解析（信頼度フィルタ + クラス別NMS + 個数集計）。
+  /// 対応形状: [1, 4+nc, N]（転置型）/ [1, N, 4+nc]。
+  /// モックモデル（[1, 14]）や未知形状は空集計を返す。
+  Map<String, int> _parseDetections(dynamic output, List<int> shape) {
+    if (shape.length != 3) return {};
+    final nc = _classNames.length;
+    final attrs = 4 + nc;
+
+    final bool transposed; // true: [1, attrs, N]
+    final int numAnchors;
+    if (shape[1] == attrs) {
+      transposed = true;
+      numAnchors = shape[2];
+    } else if (shape[2] == attrs) {
+      transposed = false;
+      numAnchors = shape[1];
+    } else {
+      return {};
+    }
+
+    double at(int anchor, int attr) {
+      final v = transposed ? output[0][attr][anchor] : output[0][anchor][attr];
+      return (v as num).toDouble();
+    }
+
+    // 検出ボックス収集
+    final boxes = <List<double>>[]; // [cx, cy, w, h, score, cls]
+    for (var i = 0; i < numAnchors; i++) {
+      var bestCls = -1;
+      var bestScore = 0.0;
+      for (var c = 0; c < nc; c++) {
+        final s = at(i, 4 + c);
+        if (s > bestScore) {
+          bestScore = s;
+          bestCls = c;
+        }
+      }
+      if (bestScore >= _confThreshold) {
+        boxes.add([
+          at(i, 0), at(i, 1), at(i, 2), at(i, 3),
+          bestScore, bestCls.toDouble(),
+        ]);
+      }
+    }
+    if (boxes.isEmpty) return {};
+
+    // クラス別 NMS
+    double iou(List<double> a, List<double> b) {
+      final ax1 = a[0] - a[2] / 2, ay1 = a[1] - a[3] / 2;
+      final ax2 = a[0] + a[2] / 2, ay2 = a[1] + a[3] / 2;
+      final bx1 = b[0] - b[2] / 2, by1 = b[1] - b[3] / 2;
+      final bx2 = b[0] + b[2] / 2, by2 = b[1] + b[3] / 2;
+      final ix = (ax2 < bx2 ? ax2 : bx2) - (ax1 > bx1 ? ax1 : bx1);
+      final iy = (ay2 < by2 ? ay2 : by2) - (ay1 > by1 ? ay1 : by1);
+      if (ix <= 0 || iy <= 0) return 0;
+      final inter = ix * iy;
+      final union = a[2] * a[3] + b[2] * b[3] - inter;
+      return union <= 0 ? 0 : inter / union;
+    }
+
+    final counts = <String, int>{};
+    for (var c = 0; c < nc; c++) {
+      final clsBoxes = boxes.where((b) => b[5] == c.toDouble()).toList()
+        ..sort((a, b) => b[4].compareTo(a[4]));
+      final kept = <List<double>>[];
+      for (final box in clsBoxes) {
+        if (kept.every((k) => iou(box, k) < _iouThreshold)) {
+          kept.add(box);
+        }
+      }
+      if (kept.isNotEmpty) {
+        counts[_classNames[c]] = kept.length;
+      }
+    }
+    return counts;
   }
 
   Future<void> _openAppSettings() async {
