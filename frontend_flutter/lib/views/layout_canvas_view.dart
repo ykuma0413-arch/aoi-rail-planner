@@ -64,35 +64,30 @@ class _PathSeg {
   }
 }
 
-/// 生成されたコースの走行経路（チェーン順 = エンジンの出力順）
+/// 生成されたコースの走行経路。
+/// ピースの出力順・向きに依存せず、描画された端点同士を最近傍マッチングで
+/// 貪欲に連結する（逆向き配置も自動で反転して追従）。これにより新旧どちらの
+/// バックエンドが返したレイアウトでも、電車は必ず「描画された線路の上」を走る。
 class TrainPath {
   final List<_PathSeg> segments;
   final double totalLength;
 
   TrainPath._(this.segments, this.totalLength);
 
-  factory TrainPath.fromRails(List<PlacedRail> rails) {
-    final segs = <_PathSeg>[];
-    var total = 0.0;
-    Offset? prevEnd;
-
-    // 直前ピース終端と次ピース始端に隙間があれば直線でブリッジする。
-    // （交差レールの直交通過・許容誤差スナップを電車が滑らかに渡るため）
-    void addWithBridge(_PathSeg seg) {
-      final segStart = seg.posAt(0);
-      if (prevEnd != null) {
-        final gap = (segStart - prevEnd!).distance;
-        if (gap > 2.0) {
-          final dir = (segStart - prevEnd!) / gap;
-          segs.add(_PathSeg.line(prevEnd!, dir, gap));
-          total += gap;
-        }
-      }
-      segs.add(seg);
-      total += seg.length;
-      prevEnd = seg.posAt(seg.length);
+  /// セグメントの向きを反転する（line: 始点終点入替 / arc: 掃引方向反転）
+  static _PathSeg _reverseSeg(_PathSeg s) {
+    if (!s.isArc) {
+      final end = s.posAt(s.length);
+      return _PathSeg.line(
+          end, Offset(-s.dirU.dx, -s.dirU.dy), s.length);
     }
+    final endAngle = s.startAngle + s.angSign * (s.length / s.radius);
+    return _PathSeg.arc(s.center, s.radius, endAngle, -s.angSign, s.length);
+  }
 
+  factory TrainPath.fromRails(List<PlacedRail> rails) {
+    // 1. 各ピースの素のセグメント（描画方向のまま）を作る
+    final raw = <_PathSeg>[];
     for (final rail in rails) {
       final rt = RailType.fromApiValue(rail.railType);
       if (rt == RailType.bridgePierStandard ||
@@ -110,14 +105,12 @@ class TrainPath {
           final center = origin +
               Offset(radius * math.cos(rot + math.pi / 2),
                   radius * math.sin(rot + math.pi / 2));
-          addWithBridge(
-              _PathSeg.arc(center, radius, rot - math.pi / 2, 1, len));
+          raw.add(_PathSeg.arc(center, radius, rot - math.pi / 2, 1, len));
         } else {
           final center = origin +
               Offset(radius * math.cos(rot - math.pi / 2),
                   radius * math.sin(rot - math.pi / 2));
-          addWithBridge(
-              _PathSeg.arc(center, radius, rot + math.pi / 2, -1, len));
+          raw.add(_PathSeg.arc(center, radius, rot + math.pi / 2, -1, len));
         }
       } else {
         double mm;
@@ -129,20 +122,63 @@ class TrainPath {
           default:
             mm = 106.0;
         }
-        final len = mm * _kScale;
-        addWithBridge(_PathSeg.line(
-            origin, Offset(math.cos(rot), math.sin(rot)), len));
+        raw.add(_PathSeg.line(
+            origin, Offset(math.cos(rot), math.sin(rot)), mm * _kScale));
       }
     }
-    // 閉ループの最終接合（許容誤差や交差通過で隙間が残る場合）もブリッジ
-    if (segs.isNotEmpty && prevEnd != null) {
-      final firstStart = segs.first.posAt(0);
-      final gap = (firstStart - prevEnd!).distance;
-      if (gap > 2.0) {
-        final dir = (firstStart - prevEnd!) / gap;
-        segs.add(_PathSeg.line(prevEnd!, dir, gap));
-        total += gap;
+    if (raw.isEmpty) return TrainPath._([], 0);
+
+    // 2. 端点の最近傍マッチングで貪欲連結（逆向き許容）
+    final segs = <_PathSeg>[];
+    var total = 0.0;
+    void push(_PathSeg s) {
+      segs.add(s);
+      total += s.length;
+    }
+
+    final used = List<bool>.filled(raw.length, false);
+    used[0] = true;
+    push(raw[0]);
+    var curEnd = raw[0].posAt(raw[0].length);
+
+    for (var n = 1; n < raw.length; n++) {
+      var bestIdx = -1;
+      var bestDist = double.infinity;
+      var bestRev = false;
+      for (var i = 0; i < raw.length; i++) {
+        if (used[i]) continue;
+        final s = raw[i];
+        final dStart = (s.posAt(0) - curEnd).distance;
+        final dEnd = (s.posAt(s.length) - curEnd).distance;
+        if (dStart < bestDist) {
+          bestDist = dStart;
+          bestIdx = i;
+          bestRev = false;
+        }
+        if (dEnd < bestDist) {
+          bestDist = dEnd;
+          bestIdx = i;
+          bestRev = true;
+        }
       }
+      if (bestIdx < 0) break;
+      used[bestIdx] = true;
+      final chosen = bestRev ? _reverseSeg(raw[bestIdx]) : raw[bestIdx];
+      // 隙間（交差の直交通過・許容誤差）は直線でブリッジ
+      final entry = chosen.posAt(0);
+      final gap = (entry - curEnd).distance;
+      if (gap > 2.0) {
+        push(_PathSeg.line(curEnd, (entry - curEnd) / gap, gap));
+      }
+      push(chosen);
+      curEnd = chosen.posAt(chosen.length);
+    }
+
+    // 3. 閉ループの最終接合もブリッジ
+    final firstStart = segs.first.posAt(0);
+    final endGap = (firstStart - curEnd).distance;
+    if (endGap > 2.0) {
+      push(_PathSeg.line(curEnd, (firstStart - curEnd) / endGap, endGap));
     }
     return TrainPath._(segs, total);
   }
