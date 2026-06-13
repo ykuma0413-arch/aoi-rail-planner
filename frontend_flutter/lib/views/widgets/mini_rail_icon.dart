@@ -80,7 +80,7 @@ void paintFemaleJoint(Canvas canvas, Offset pos, Color color,
 
 Color grooveColorOf(Color base) => Color.lerp(base, Colors.black, 0.28)!;
 
-/// 道床の縁取り（白枠）の太さ（片側 px）。実物プラレールの白フチを表現。
+/// 道床の縁取り（白枠）の太さ（片側 px）。実物のレールの白フチを表現。
 const double kBandBorder = 2.6;
 
 // ---- 白枠（下地）: 道床より太い白ストロークで縁取りを作る ----

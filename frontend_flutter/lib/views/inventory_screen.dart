@@ -12,7 +12,7 @@ import 'suggest_screen.dart';
 import 'history_screen.dart';
 import 'assembly_screen.dart';
 import 'widgets/mini_rail_icon.dart';
-import '../utils/amazon_links.dart';
+import '../utils/store_links.dart';
 
 const _themes = {
   'standard': 'おまかせ',
@@ -597,15 +597,15 @@ class _RailCountRow extends ConsumerWidget {
                   total < 100 ? () => notifier.increment(item.railType) : null,
             ),
             const SizedBox(width: 2),
-            // Amazon で追加購入（アフィリエイトリンク）
+            // 楽天市場で追加購入（アフィリエイトリンク）
             IconButton(
               icon: const Icon(Icons.add_shopping_cart),
-              color: const Color(0xFFFF9900),
+              color: const Color(0xFFBF0000),
               iconSize: 22,
               padding: const EdgeInsets.all(4),
               constraints: const BoxConstraints(),
-              tooltip: 'Amazonで購入',
-              onPressed: () => launchAmazon(item.railType),
+              tooltip: '楽天で購入',
+              onPressed: () => launchStore(item.railType),
             ),
           ],
         ),

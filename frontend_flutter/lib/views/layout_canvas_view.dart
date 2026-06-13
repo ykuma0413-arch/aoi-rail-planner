@@ -419,7 +419,7 @@ class _LayoutPainter extends CustomPainter {
   static const double scale = _kScale;
   static const double _scale = scale;
   static const double _railWidth = 6.0;
-  // 実物プラレール比率に寄せた道床幅（細め）。白枠を足しても突起がない分すっきり。
+  // 実物のレール比率に寄せた道床幅（細め）。白枠を足しても突起がない分すっきり。
   static const double _bandWidth = 9.5;
 
   _LayoutPainter({

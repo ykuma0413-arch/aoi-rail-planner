@@ -28,13 +28,11 @@ _rate_store: Dict[str, list] = defaultdict(list)
 _RATE_WINDOW = 60
 _RATE_LIMIT = 10
 
-# ---- アフィリエイトURL ----
-_AFFILIATE_BASE = os.getenv("AFFILIATE_BASE_URL", "")
-# おもちゃの電車ブランドの検索キーワード（URLエンコード済み・リテラル保持禁止のため）
-_AMAZON_SEARCH_BASE = (
-    "https://www.amazon.co.jp/s?i=toys&k="
-    "%E3%83%97%E3%83%A9%E3%83%AC%E3%83%BC%E3%83%AB+"
-)
+# ---- アフィリエイトURL（楽天市場） ----
+# 楽天アフィリエイトID（環境変数で上書き可）
+_RAKUTEN_AID = os.getenv("RAKUTEN_AID", "54db65ab.927c5a3b.54db65ac.ffa6cfb0")
+# おもちゃの電車ブランドの検索キーワード（URLエンコード済み・リテラル保持禁止のため §8）
+_BRAND_KW = "%E3%83%97%E3%83%A9%E3%83%AC%E3%83%BC%E3%83%AB"
 
 
 # ---- FunctionApp 定義 ----
@@ -52,15 +50,22 @@ def _check_rate_limit(ip: str) -> bool:
 
 
 def _affiliate_urls(rail_type_value: str) -> Tuple[str, str]:
+    """楽天市場の (アフィリエイトリンク, 直接検索URL) を返す。仕様§6.2の優先順位対応。"""
     try:
         geom = RAIL_GEOMETRY_DB.get(RailType(rail_type_value))
         name = geom.display_name if geom else rail_type_value
     except ValueError:
         name = rail_type_value
-    fallback = _AMAZON_SEARCH_BASE + urllib.parse.quote(name)
-    primary = (
-        _AFFILIATE_BASE + urllib.parse.quote(name) if _AFFILIATE_BASE else fallback
-    )
+    # 「ブランド名(エンコード済) %20 パーツ名」で楽天検索URLを構成
+    keyword = _BRAND_KW + "%20" + urllib.parse.quote(name)
+    fallback = f"https://search.rakuten.co.jp/search/mall/{keyword}/"
+    if _RAKUTEN_AID:
+        enc = urllib.parse.quote(fallback, safe="")
+        primary = (
+            f"https://hb.afl.rakuten.co.jp/hgc/{_RAKUTEN_AID}/?pc={enc}&m={enc}"
+        )
+    else:
+        primary = fallback
     return primary, fallback
 
 
