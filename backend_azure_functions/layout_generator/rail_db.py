@@ -12,6 +12,8 @@ import math
 class RailType(Enum):
     STRAIGHT = "straight"
     STRAIGHT_HALF = "straight_half"
+    STRAIGHT_QUARTER = "straight_quarter"   # 1/4直線レール (26.5mm)
+    STOP_RAIL = "stop_rail"                 # ストップレール (106mm直線+停止機構)
     CURVE_R = "curve_r"
     CURVE_R_LARGE = "curve_r_large"
     INCLINE_START = "incline_start"
@@ -22,9 +24,12 @@ class RailType(Enum):
     SWITCH_RIGHT = "switch_right"
     BRIDGE_PIER_STANDARD = "bridge_pier_standard"
     BRIDGE_PIER_BLOCK = "bridge_pier_block"
-    # 自動探索除外パーツ（在庫登録は許容）
+    # 自動探索除外パーツ（在庫登録は許容: 仕様§2.1ガードレール）
     FLEXIBLE = "flexible"
     STRAIGHT_DOUBLE = "straight_double"
+    SWITCH_Y = "switch_y"                   # Y字ポイントレール
+    AUTO_TURNOUT = "auto_turnout"           # 自動ターンアウトレール
+    CROSS_POINT = "cross_point"             # 交差ポイントレール
 
 
 class Polarity(Enum):
@@ -82,7 +87,23 @@ RAIL_GEOMETRY_DB: Dict[RailType, RailGeometry] = {
             JointPoint(0.0, 0.0, 180.0, Polarity.FEMALE),
             JointPoint(_S2, 0.0, 0.0, Polarity.MALE),
         ],
-        display_name="直線レール（ハーフ）",
+        display_name="1/2直線レール",
+    ),
+    RailType.STRAIGHT_QUARTER: RailGeometry(
+        rail_type=RailType.STRAIGHT_QUARTER,
+        joints=[
+            JointPoint(0.0, 0.0, 180.0, Polarity.FEMALE),
+            JointPoint(_S / 4, 0.0, 0.0, Polarity.MALE),
+        ],
+        display_name="1/4直線レール",
+    ),
+    RailType.STOP_RAIL: RailGeometry(
+        rail_type=RailType.STOP_RAIL,
+        joints=[
+            JointPoint(0.0, 0.0, 180.0, Polarity.FEMALE),
+            JointPoint(_S, 0.0, 0.0, Polarity.MALE),
+        ],
+        display_name="ストップレール",
     ),
     RailType.CURVE_R: RailGeometry(
         rail_type=RailType.CURVE_R,
@@ -181,6 +202,37 @@ RAIL_GEOMETRY_DB: Dict[RailType, RailGeometry] = {
         ],
         excluded_from_auto=True,  # 2倍系: 2畳枠制約超過のため除外
         display_name="直線レール（2倍）",
+    ),
+    RailType.SWITCH_Y: RailGeometry(
+        rail_type=RailType.SWITCH_Y,
+        joints=[
+            JointPoint(0.0, 0.0, 180.0, Polarity.FEMALE),
+            JointPoint(_cx_r, _cy_r, _DA, Polarity.MALE),
+            JointPoint(_cx_r, -_cy_r, -_DA % 360.0, Polarity.MALE),
+        ],
+        excluded_from_auto=True,  # 分岐系: 探索空間爆発のため除外
+        display_name="Y字ポイントレール",
+    ),
+    RailType.AUTO_TURNOUT: RailGeometry(
+        rail_type=RailType.AUTO_TURNOUT,
+        joints=[
+            JointPoint(0.0, 0.0, 180.0, Polarity.FEMALE),
+            JointPoint(_S, 0.0, 0.0, Polarity.MALE),
+            JointPoint(_cx_r, _cy_r, _DA, Polarity.MALE),
+        ],
+        excluded_from_auto=True,  # 分岐系: 探索空間爆発のため除外
+        display_name="自動ターンアウトレール",
+    ),
+    RailType.CROSS_POINT: RailGeometry(
+        rail_type=RailType.CROSS_POINT,
+        joints=[
+            JointPoint(0.0, 0.0, 180.0, Polarity.FEMALE),
+            JointPoint(_S, 0.0, 0.0, Polarity.MALE),
+            JointPoint(_S / 2, -_S / 2, 270.0, Polarity.FEMALE),
+            JointPoint(_S / 2, _S / 2, 90.0, Polarity.MALE),
+        ],
+        excluded_from_auto=True,  # ポイント切替系: 探索空間爆発のため除外
+        display_name="交差ポイントレール",
     ),
 }
 

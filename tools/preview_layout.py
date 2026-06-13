@@ -18,7 +18,8 @@ TILE = int(1800 * SCALE)
 
 RAIL_BLUE = (0, 114, 188)
 Z1 = (0, 75, 135)
-PIER = (141, 154, 165)
+PIER_STD = (255, 193, 7)    # 標準橋脚 = 黄色
+PIER_BLOCK = (158, 158, 158)  # ブロック橋脚 = 灰色
 WHITE = (255, 255, 255)
 
 BAND = 9.5            # 道床幅 px（アプリと同じ）
@@ -87,7 +88,8 @@ def draw_layout(d: ImageDraw.ImageDraw, placed, ox, oy):
         if "pier" in p["rail_type"]:
             x = ox + p["origin_x"] * SCALE
             y = oy + p["origin_y"] * SCALE
-            d.rectangle([x - 6, y - 6, x + 6, y + 6], fill=PIER)
+            pc = PIER_BLOCK if "block" in p["rail_type"] else PIER_STD
+            d.rectangle([x - 6, y - 6, x + 6, y + 6], fill=pc)
             continue
         segs, end, end_ang = _segments(p, ox, oy)
         color = RAIL_BLUE if p["z_level"] == 0 else Z1

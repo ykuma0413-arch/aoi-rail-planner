@@ -5,6 +5,10 @@ import '../../models/rail_type.dart';
 /// 実物のおもちゃレールに近い青色
 const Color kRailBlue = Color(0xFF0072BC);
 
+/// 橋脚の色（標準=黄色 / ブロック=灰色）
+const Color kPierStandard = Color(0xFFFFC107); // 黄色
+const Color kPierBlock = Color(0xFF9E9E9E);    // 灰色
+
 /// 在庫リスト用のレールアイコン。
 /// 実物風: 青い道床（太いバンド）+ 2本の溝 + 凸ペグ / 凹ホールのジョイント。
 class MiniRailIcon extends StatelessWidget {
@@ -201,6 +205,10 @@ class _RailIconPainter extends CustomPainter {
         _straight(canvas, size, lengthRatio: 0.85);
       case RailType.straightHalf:
         _straight(canvas, size, lengthRatio: 0.52);
+      case RailType.straightQuarter:
+        _straight(canvas, size, lengthRatio: 0.32);
+      case RailType.stopRail:
+        _straight(canvas, size, lengthRatio: 0.85, stop: true);
       case RailType.straightDouble:
         _straight(canvas, size, lengthRatio: 0.96, seam: true);
       case RailType.curveR:
@@ -209,10 +217,16 @@ class _RailIconPainter extends CustomPainter {
         _curve(canvas, size, radiusRatio: 0.80);
       case RailType.crossing:
         _crossing(canvas, size);
+      case RailType.crossPoint:
+        _crossing(canvas, size);
       case RailType.switchLeft:
         _switch(canvas, size, branchUp: true);
       case RailType.switchRight:
         _switch(canvas, size, branchUp: false);
+      case RailType.autoTurnout:
+        _switch(canvas, size, branchUp: true);
+      case RailType.switchY:
+        _switchY(canvas, size);
       case RailType.inclineStart:
         _incline(canvas, size, ascending: true, marker: true);
       case RailType.inclineMiddle:
@@ -228,7 +242,8 @@ class _RailIconPainter extends CustomPainter {
     }
   }
 
-  void _straight(Canvas c, Size s, {required double lengthRatio, bool seam = false}) {
+  void _straight(Canvas c, Size s,
+      {required double lengthRatio, bool seam = false, bool stop = false}) {
     final w = s.width, h = s.height;
     final pad = (1 - lengthRatio) * w / 2 + 4;
     final mid = h / 2;
@@ -242,8 +257,32 @@ class _RailIconPainter extends CustomPainter {
         Paint()..color = grooveColorOf(color)..strokeWidth = 1.2,
       );
     }
+    if (stop) {
+      // ストップレール: 赤い停止標識
+      final sx = (a.dx + b.dx) / 2;
+      c.drawCircle(Offset(sx, mid), _bw * 0.42,
+          Paint()..color = const Color(0xFFE53935));
+    }
     paintFemaleJoint(c, a, color, outwardAngle: math.pi, size: _js);
     paintMaleJoint(c, b, color, outwardAngle: 0, size: _js);
+  }
+
+  /// Y字ポイント: 直線が両方向に分岐
+  void _switchY(Canvas c, Size s) {
+    final w = s.width, h = s.height;
+    final mid = h / 2;
+    final a = Offset(7, mid);
+    final fork = Offset(w * 0.40, mid);
+    final up = Offset(w - 8, mid - h * 0.30);
+    final down = Offset(w - 8, mid + h * 0.30);
+    _bandLine(c, fork, up, _bw * 0.8, color);
+    _bandLine(c, fork, down, _bw * 0.8, color);
+    _bandLine(c, a, fork, _bw * 0.9, color);
+    paintFemaleJoint(c, a, color, outwardAngle: math.pi, size: _js);
+    final upA = math.atan2(up.dy - fork.dy, up.dx - fork.dx);
+    final dnA = math.atan2(down.dy - fork.dy, down.dx - fork.dx);
+    paintMaleJoint(c, up, color, outwardAngle: upA, size: 2.6);
+    paintMaleJoint(c, down, color, outwardAngle: dnA, size: 2.6);
   }
 
   void _curve(Canvas c, Size s, {required double radiusRatio}) {
@@ -319,9 +358,11 @@ class _RailIconPainter extends CustomPainter {
   void _pier(Canvas c, Size s, {required bool block}) {
     final w = s.width, h = s.height;
     final cx = w / 2;
-    final fill = Paint()..color = color;
+    // 標準橋脚 = 黄色 / ブロック橋脚 = 灰色
+    final pierColor = block ? kPierBlock : kPierStandard;
+    final fill = Paint()..color = pierColor;
     final stroke = Paint()
-      ..color = grooveColorOf(color)
+      ..color = grooveColorOf(pierColor)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.3;
     if (block) {

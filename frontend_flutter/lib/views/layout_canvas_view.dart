@@ -599,15 +599,17 @@ class _LayoutPainter extends CustomPainter {
     final origin = _toCanvas(rail.originX, rail.originY, size);
     final rt = RailType.fromApiValue(rail.railType);
 
-    // 橋脚: fill パスのみ描画
+    // 橋脚: fill パスのみ描画（標準=黄色 / ブロック=灰色）
     if (rt == RailType.bridgePierStandard || rt == RailType.bridgePierBlock) {
       if (pass == _Pass.fill) {
+        final pierColor =
+            rt == RailType.bridgePierBlock ? kPierBlock : kPierStandard;
         final pierRect = RRect.fromRectAndRadius(
           Rect.fromCenter(center: origin, width: 15, height: 15),
           const Radius.circular(3),
         );
-        canvas.drawRRect(pierRect,
-            Paint()..color = const Color(0xFF8D9AA5).withOpacity(color.opacity));
+        canvas.drawRRect(
+            pierRect, Paint()..color = pierColor.withOpacity(color.opacity));
         canvas.drawRRect(
           pierRect,
           Paint()

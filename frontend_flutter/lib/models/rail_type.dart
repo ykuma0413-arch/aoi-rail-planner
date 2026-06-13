@@ -1,7 +1,9 @@
 /// あおいレールプランナー - レール種別モデル
 enum RailType {
   straight('straight', '直線レール'),
-  straightHalf('straight_half', '直線レール（ハーフ）'),
+  straightHalf('straight_half', '1/2直線レール'),
+  straightQuarter('straight_quarter', '1/4直線レール'),
+  stopRail('stop_rail', 'ストップレール'),
   curveR('curve_r', '曲線レール（R）'),
   curveRLarge('curve_r_large', '大カーブレール'),
   inclineStart('incline_start', '勾配開始レール'),
@@ -10,6 +12,9 @@ enum RailType {
   crossing('crossing', '交差レール'),
   switchLeft('switch_left', '左分岐レール'),
   switchRight('switch_right', '右分岐レール'),
+  switchY('switch_y', 'Y字ポイントレール'),
+  autoTurnout('auto_turnout', '自動ターンアウトレール'),
+  crossPoint('cross_point', '交差ポイントレール'),
   bridgePierStandard('bridge_pier_standard', '橋脚（標準）'),
   bridgePierBlock('bridge_pier_block', '橋脚（ブロック）'),
   flexible('flexible', 'まがレール'),
