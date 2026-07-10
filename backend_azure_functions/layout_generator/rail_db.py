@@ -55,6 +55,22 @@ class RailGeometry:
     excluded_from_auto: bool = False
     display_name: str = ""
 
+    @property
+    def move_vector(self) -> tuple:
+        """入口→出口の移動量 (dx, dy)。橋脚など2ジョイント未満は (0, 0)。"""
+        if len(self.joints) < 2:
+            return (0.0, 0.0)
+        j0, j1 = self.joints[0], self.joints[1]
+        return (j1.x - j0.x, j1.y - j0.y)
+
+    @property
+    def turn_degrees(self) -> float:
+        """入口→出口の旋回量（符号付き度）。橋脚などは 0。"""
+        if len(self.joints) < 2:
+            return 0.0
+        a = self.joints[1].angle % 360.0
+        return a - 360.0 if a > 180.0 else a
+
 
 # ---- 実測値定数 ----
 _S = 106.0          # 直線レール長さ

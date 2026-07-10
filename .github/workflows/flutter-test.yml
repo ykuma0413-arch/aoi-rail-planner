@@ -1,0 +1,36 @@
+name: Flutter Tests
+
+# 描画レイヤーテスト（simulator_render_test.dart）の実行環境。
+# ローカルに Flutter SDK が無いため、LOOP はこのワークフローを
+# gh workflow run で起動して pass/fail を判定する。
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'frontend_flutter/lib/rail/**'
+      - 'frontend_flutter/test/**'
+      - '.github/workflows/flutter-test.yml'
+
+jobs:
+  flutter-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.32.1'
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        working-directory: frontend_flutter
+        run: flutter pub get
+
+      - name: Run simulator render tests
+        working-directory: frontend_flutter
+        run: flutter test test/simulator_render_test.dart -r expanded

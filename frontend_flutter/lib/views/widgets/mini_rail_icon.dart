@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import '../../models/rail_type.dart';
+import '../../rail/rail_geometry.dart';
 
 /// 実物のおもちゃレールに近い青色
 const Color kRailBlue = Color(0xFF0072BC);
@@ -108,8 +109,29 @@ void paintBandBorderArc(
         ..style = PaintingStyle.stroke);
 }
 
-// ---- 青い道床本体 + 2本の溝（白枠の内側に重ねる） ----
-void paintBandFillLine(Canvas c, Offset a, Offset b, double w, Color color) {
+/// 枕木の描画間隔（px）。実寸18mm × キャンバススケール0.42 相当。
+const double kTieSpacingPx = kTieSpacingMm * 0.42;
+
+/// 枕木列を描く（直線・曲線共通。computeTiePoses の統一弧長パラメータを使用）
+void _paintTies(Canvas c, RailPiece piece, Offset origin, double heading0,
+    double w, Color color, double tieSpacingPx) {
+  final tiePaint = Paint()
+    ..color = grooveColorOf(color)
+    ..strokeWidth = w * 0.15
+    ..strokeCap = StrokeCap.butt;
+  final half = w * 0.34;
+  for (final pose in computeTiePoses(piece,
+      spacingMm: tieSpacingPx, origin: origin, heading0: heading0)) {
+    final perp =
+        Offset(-math.sin(pose.headingRad), math.cos(pose.headingRad));
+    c.drawLine(pose.position + perp * half, pose.position - perp * half,
+        tiePaint);
+  }
+}
+
+// ---- 青い道床本体 + 枕木 + 2本の溝（白枠の内側に重ねる） ----
+void paintBandFillLine(Canvas c, Offset a, Offset b, double w, Color color,
+    {double tieSpacingPx = kTieSpacingPx}) {
   c.drawLine(
       a,
       b,
@@ -121,6 +143,17 @@ void paintBandFillLine(Canvas c, Offset a, Offset b, double w, Color color) {
   final len = d.distance;
   if (len < 0.01) return;
   final perp = Offset(-d.dy / len, d.dx / len);
+
+  // 枕木（統一弧長パラメータ: 直線 = 旋回0）
+  _paintTies(
+      c,
+      RailPiece(lengthMm: len, turnDegrees: 0),
+      a,
+      math.atan2(d.dy, d.dx),
+      w,
+      color,
+      tieSpacingPx);
+
   final groove = Paint()
     ..color = grooveColorOf(color)
     ..strokeWidth = w * 0.12
@@ -130,7 +163,8 @@ void paintBandFillLine(Canvas c, Offset a, Offset b, double w, Color color) {
 }
 
 void paintBandFillArc(Canvas c, Offset center, double r, double start,
-    double sweep, double w, Color color) {
+    double sweep, double w, Color color,
+    {double tieSpacingPx = kTieSpacingPx}) {
   c.drawArc(
       Rect.fromCircle(center: center, radius: r),
       start,
@@ -141,6 +175,22 @@ void paintBandFillArc(Canvas c, Offset center, double r, double start,
         ..strokeWidth = w
         ..strokeCap = StrokeCap.butt
         ..style = PaintingStyle.stroke);
+
+  // 枕木（統一弧長パラメータ: 曲線 = 旋回 sweep）
+  final startPt =
+      center + Offset(r * math.cos(start), r * math.sin(start));
+  final heading0 = start + (sweep >= 0 ? math.pi / 2 : -math.pi / 2);
+  _paintTies(
+      c,
+      RailPiece(
+          lengthMm: r * sweep.abs(),
+          turnDegrees: sweep * 180.0 / math.pi),
+      startPt,
+      heading0,
+      w,
+      color,
+      tieSpacingPx);
+
   final groove = Paint()
     ..color = grooveColorOf(color)
     ..strokeWidth = w * 0.12

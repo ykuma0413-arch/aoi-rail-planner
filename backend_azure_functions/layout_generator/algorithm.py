@@ -240,15 +240,49 @@ class _Walker:
         hm = self.h % 360.0
         return hm <= CLOSE_ANGLE_DEG or hm >= 360.0 - CLOSE_ANGLE_DEG
 
-    def no_self_intersection(self, exempt: frozenset = frozenset()) -> bool:
+    # ---- テスト/検証用アクセサ（仕様§4.1 の許容誤差判定を数値で公開） ----
+
+    def position_error_mm(self) -> float:
+        """終端位置と始端(0,0)の距離 (mm)"""
+        return math.hypot(self.x, self.y)
+
+    def angle_error_deg(self) -> float:
+        """終端向きと始端(0°)の角度差 (deg, 0〜180)"""
+        hm = self.h % 360.0
+        return min(hm, 360.0 - hm)
+
+    @classmethod
+    def geometry_for(cls, rail_type: RailType):
+        """
+        Walker が実際に使う走行変換（rail_db 由来）を返すゲッター。
+        単一真実源の検証テスト用。橋脚などの非軌道ピースは (0,0)/0°。
+        """
+        from types import SimpleNamespace
+        xf = _TRACK_XFORM.get(rail_type)
+        if xf is None:
+            return SimpleNamespace(move_vector=(0.0, 0.0), turn_degrees=0.0)
+        return SimpleNamespace(move_vector=(xf[0], xf[1]), turn_degrees=xf[2])
+
+    @classmethod
+    def from_course(cls, course: "Course") -> "_Walker":
+        """generate_course() が返す Course から生成時の Walker を取り出す"""
+        if course.walker is None:
+            raise ValueError("course has no walker (open preview?)")
+        return course.walker
+
+    def no_self_intersection(self, exempt: Optional[frozenset] = None,
+                             grid_mm: float = GRID_MM) -> bool:
         """
         20mm グリッド占有で自己交差をチェック（隣接ピース・始終端の重なりは許容）。
         exempt: 交差レールなど「他ピースとの重なりが正当」なピース番号の集合。
+                None の場合は生成時に記録された既定値（_overlap_exempt）を使う。
         """
+        if exempt is None:
+            exempt = getattr(self, "_overlap_exempt", frozenset())
         n_pieces = self._piece_idx + 1
         cells: Dict[Tuple[int, int], int] = {}
         for idx, x, y in self.samples:
-            cell = (int(x // GRID_MM), int(y // GRID_MM))
+            cell = (int(x // grid_mm), int(y // grid_mm))
             prev = cells.get(cell)
             if prev is not None and prev != idx:
                 if prev in exempt or idx in exempt:
@@ -421,6 +455,8 @@ def _try_build_figure8(inv: Dict[RailType, int]) -> Optional[_Walker]:
         return None
     if not w.no_self_intersection(exempt=frozenset({0})):
         return None
+    # 交差レール(idx 0)の重なりは正当 — 後段の再検証（from_course経由）でも同じ扱いにする
+    w._overlap_exempt = frozenset({0})
     return w
 
 
@@ -607,15 +643,24 @@ def _generate(
     inventory: Dict[str, int],
     theme: str,
 ) -> Tuple[List[dict], bool, Dict[str, int]]:
-    """テンプレート構成の本体"""
+    """テンプレート構成の本体（API用: walker を伏せて返す）"""
+    placed, closed, missing, _walker = _generate_ex(
+        inventory, theme, random.Random())
+    return placed, closed, missing
+
+
+def _generate_ex(
+    inventory: Dict[str, int],
+    theme: str,
+    rng: random.Random,
+) -> Tuple[List[dict], bool, Dict[str, int], Optional["_Walker"]]:
+    """テンプレート構成の本体（検証用に生成時 Walker も返す）"""
     inv: Dict[RailType, int] = {}
     for k, v in inventory.items():
         try:
             inv[RailType(k)] = int(v)
         except (ValueError, TypeError):
             pass
-
-    rng = random.Random()
 
     std = inv.get(RailType.CURVE_R, 0)
     large = inv.get(RailType.CURVE_R_LARGE, 0)
@@ -624,7 +669,7 @@ def _generate(
     if arc is None:
         shortage = max(1, REQUIRED_CURVES - std - large)
         placed = _build_open_preview(inv)
-        return placed, False, {RailType.CURVE_R.value: shortage}
+        return placed, False, {RailType.CURVE_R.value: shortage}, None
 
     theta = rng.choice([i * CURVE_ANGLE for i in range(16)])
 
@@ -633,7 +678,7 @@ def _generate(
         walker = _try_build_elevated(inv, arc)
         if walker is not None:
             placed = _rotate_and_center(walker.placed, walker.points, theta)
-            return placed, True, {}
+            return placed, True, {}, walker
         # 坂・橋脚が足りなければ通常生成へフォールバック
 
     # 8の字テーマ: 交差レールがあれば本物の8の字を構成
@@ -641,7 +686,7 @@ def _generate(
         walker = _try_build_figure8(inv)
         if walker is not None:
             placed = _rotate_and_center(walker.placed, walker.points, theta)
-            return placed, True, {}
+            return placed, True, {}, walker
         # 部材不足ならコンパクトオーバルへフォールバック
 
     # ---- 在庫予算の計算（直線プールは DB 由来の STRAIGHT_TYPES 全種） ----
@@ -685,7 +730,7 @@ def _generate(
 
     if best_walker is None:
         placed = _build_open_preview(inv)
-        return placed, False, {RailType.CURVE_R.value: 1}
+        return placed, False, {RailType.CURVE_R.value: 1}, None
 
     # ---- 側線（スパー）: ポイントレールがあれば本線に行き止まり側線を付ける ----
     result_placed = best_walker.placed
@@ -699,7 +744,7 @@ def _generate(
             result_placed, result_points, _open_end = spur
 
     placed = _rotate_and_center(result_placed, result_points, theta)
-    return placed, True, {}
+    return placed, True, {}, best_walker
 
 
 async def search_layout(
@@ -718,3 +763,57 @@ async def search_layout(
         return await asyncio.wait_for(_run(), timeout=SEARCH_TIMEOUT_S)
     except asyncio.TimeoutError:
         return [], False, {RailType.CURVE_R.value: REQUIRED_CURVES}
+
+
+# ============================================================
+# テストハーネス用 API（tests/test_geometry.py が使用）
+# ============================================================
+
+
+class Course:
+    """generate_course() の戻り値。pieces は rail_type を持つ軽量オブジェクト列。"""
+
+    def __init__(self, placed: List[dict], closed: bool,
+                 missing: Dict[str, int], theme: str,
+                 walker: Optional[_Walker]) -> None:
+        from types import SimpleNamespace
+        self.placed = placed
+        self.closed = closed
+        self.missing = missing
+        self.theme = theme
+        self.walker = walker
+        self.pieces = [
+            SimpleNamespace(rail_type=p["rail_type"]) for p in placed]
+
+
+def generate_course(seed: Optional[int] = None) -> Course:
+    """
+    シード付き決定的コース生成（テスト・検証用の同期ハーネス）。
+
+    テーマと在庫レシピを seed から決定し、生成の再現性を保証する:
+      - theme      : seed % 3 → standard / elevated / figure8
+      - ポイント   : 偶数 seed は左分岐、奇数 seed は右分岐を1本（側線の多様性）
+      - seed % 4==3: 標準カーブを14本に絞り大カーブ4本を混ぜる
+                     （大カーブの使用経路を確実に踏む）
+    """
+    s = 0 if seed is None else int(seed)
+    rng = random.Random(s)
+    theme = ("standard", "elevated", "figure8")[s % 3]
+
+    inv: Dict[str, int] = {
+        "curve_r": 26, "straight": 10, "straight_half": 6,
+        "straight_quarter": 4, "stop_rail": 2,
+        "incline_start": 1, "incline_end": 1,
+        "bridge_pier_standard": 2, "bridge_pier_block": 2,
+        "crossing": 1,
+    }
+    if s % 2 == 0:
+        inv["switch_left"] = 1
+    else:
+        inv["switch_right"] = 1
+    if s % 4 == 3:
+        inv["curve_r"] = 14
+        inv["curve_r_large"] = 4
+
+    placed, closed, missing, walker = _generate_ex(inv, theme, rng)
+    return Course(placed, closed, missing, theme, walker)
