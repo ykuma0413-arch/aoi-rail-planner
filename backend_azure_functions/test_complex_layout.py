@@ -27,7 +27,8 @@ sys.path.insert(0, os.path.dirname(__file__))
 from layout_generator.algorithm import search_layout, CLOSE_DIST_MM, CLOSE_ANGLE_DEG
 
 # ---- 部材実測値（エンジンと独立に定義してクロスチェック） ----
-STRAIGHT = {"straight": 106.0, "straight_half": 53.0, "straight_double": 212.0}
+STRAIGHT = {"straight": 106.0, "straight_half": 53.0, "straight_quarter": 26.5,
+            "stop_rail": 106.0, "straight_double": 212.0}
 CURVE = {"curve_r": 103.0, "curve_r_large": 206.0}
 CURVE_DEG = 22.5
 INCLINE = {"incline_start": 106.0, "incline_end": 106.0, "incline_middle": 106.0}

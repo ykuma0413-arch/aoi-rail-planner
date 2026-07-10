@@ -1,19 +1,23 @@
 """
-あおいレールプランナー - レイアウト生成エンジン v2.1（ウィグル付きテンプレート構成）
+あおいレールプランナー - レイアウト生成エンジン v2.2（rail_db 単一真実源化）
 
-v2 で「カーブ16本あれば必ず閉じる」保証を実現したが、生成形状がオーバルのみだった。
-v2.1 では右旋回（カーブの反転連結, flipped）を導入し、複雑な閉ループを生成する。
+v2.1 まではエンジンが長さ・半径・角度を独自定数で二重保持していた。
+v2.2 では rail_db.RAIL_GEOMETRY_DB を single source of truth とし、
+  - 各ピースの走行変換（入口→出口の移動量・回転量・Z変化）
+  - 直線プール / カーブプールの選択可否（excluded_from_auto）
+  - 交差レールの直交アーム座標（8の字用）
+をすべて DB から導出する。これにより DB にレールを追加・修正すれば
+エンジンは自動で追従する。
 
-閉路性の数学的根拠（v2.1 拡張）:
+閉路性の数学的根拠（v2.1 から不変）:
   基本ループ = ARC(左8本=180°) + 辺S + ARC(左8本) + 辺S
   辺S が「正味旋回角 0」の任意ピース列なら、2つ目の辺は heading が 180° 反転して
   いるため同一列の変位ベクトルが正確に逆向きになり、ループは厳密に閉じる。
-  → 辺に S字 [L,R]・波形 [L,L,R,R] などのウィグルモチーフを挿入しても閉路は保たれる。
 
 安全性:
-  - 自己交差は 20mm グリッド占有チェックで排除（仕様 §4.2 の簡易マスクの転用）
-  - 閉路判定は仕様 §4.1 の許容誤差（距離10mm・角度2°）に準拠
-  - 不合格ならウィグル数を減らして再試行し、最終的にオーバルへフォールバック
+  - 自己交差は 20mm グリッド占有チェックで排除（仕様 §4.2）
+  - 閉路判定は仕様 §4.1 の許容誤差（距離10mm・角度2°）
+  - 不合格ならウィグル数を減らして再試行 → 最終的に純オーバルへフォールバック
     （= カーブ16本あれば必ず成功、の保証は維持）
 """
 from __future__ import annotations
@@ -23,40 +27,105 @@ import math
 import random
 from typing import Dict, List, Optional, Tuple
 
-from .rail_db import RailType
+from .rail_db import RailType, RAIL_GEOMETRY_DB
 
-# ---- 幾何定数 ----
+# ---- エリア・許容誤差定数（仕様書由来。ジオメトリではないのでここに残す） ----
 AREA_MM = 1800.0
 CENTER_MM = AREA_MM / 2
-CURVE_ANGLE = 22.5
 REQUIRED_CURVES = 16
-
-STRAIGHT_LEN: Dict[RailType, float] = {
-    RailType.STRAIGHT: 106.0,
-    RailType.STRAIGHT_HALF: 53.0,
-}
-CURVE_RADIUS: Dict[RailType, float] = {
-    RailType.CURVE_R: 103.0,
-    RailType.CURVE_R_LARGE: 206.0,
-}
-INCLINE_LEN = 106.0
 SEARCH_TIMEOUT_S = 0.200      # 仕様 §4.3
 
-# 仕様 §4.1 接続許容誤差
-CLOSE_DIST_MM = 10.0
+CLOSE_DIST_MM = 10.0          # 仕様 §4.1
 CLOSE_ANGLE_DEG = 2.0
 
 GRID_MM = 20.0                # 仕様 §4.2 占有グリッド
-MAX_BBOX_MM = 1500.0          # レイアウトの最大外形
+MAX_BBOX_MM = 1500.0
 MAX_SIDE_MM = 1000.0
 
-# ピース = (RailType, flipped)。flipped=True のカーブは右旋回。
+# ============================================================
+# rail_db からの導出（single source of truth）
+# ============================================================
+
+
+def _signed_angle(deg: float) -> float:
+    a = deg % 360.0
+    return a - 360.0 if a > 180.0 else a
+
+
+def _derive_track_transforms() -> Dict[RailType, Tuple[float, float, float, int]]:
+    """
+    各軌道ピースの走行変換 (exit_x, exit_y, 旋回角[signed deg], Z変化) を
+    RAIL_GEOMETRY_DB の joints[0]→joints[1] から導出する。
+    """
+    out: Dict[RailType, Tuple[float, float, float, int]] = {}
+    for rt, g in RAIL_GEOMETRY_DB.items():
+        if len(g.joints) < 2:
+            continue
+        j0, j1 = g.joints[0], g.joints[1]
+        out[rt] = (
+            j1.x - j0.x,
+            j1.y - j0.y,
+            _signed_angle(j1.angle),
+            j1.z_offset - j0.z_offset,
+        )
+    return out
+
+
+_TRACK_XFORM = _derive_track_transforms()
+
+# 橋脚（ジョイントを持たない設置物）
+PIER_TYPES = frozenset(
+    rt for rt, g in RAIL_GEOMETRY_DB.items() if len(g.joints) == 0)
+
+# 自動探索で選択可能な軌道ピース
+_SELECTABLE = frozenset(
+    rt for rt, g in RAIL_GEOMETRY_DB.items()
+    if not g.excluded_from_auto and rt in _TRACK_XFORM)
+
+# 直線プール: 旋回 0・Z変化 0・2ジョイント（交差は4ジョイントなので自然に除外）
+STRAIGHT_TYPES: List[RailType] = sorted(
+    (rt for rt in _SELECTABLE
+     if abs(_TRACK_XFORM[rt][2]) < 1e-9
+     and _TRACK_XFORM[rt][3] == 0
+     and len(RAIL_GEOMETRY_DB[rt].joints) == 2),
+    key=lambda rt: -_TRACK_XFORM[rt][0],
+)
+STRAIGHT_LEN: Dict[RailType, float] = {
+    rt: _TRACK_XFORM[rt][0] for rt in STRAIGHT_TYPES}
+
+# カーブ定数（描画・8の字数学の基準は標準カーブ）
+CURVE_ANGLE = abs(_TRACK_XFORM[RailType.CURVE_R][2])
+
+
+def _radius_of(rt: RailType) -> float:
+    ex, ey, _, _ = _TRACK_XFORM[rt]
+    return (ex * ex + ey * ey) / (2.0 * ey)
+
+
+CURVE_RADIUS: Dict[RailType, float] = {
+    RailType.CURVE_R: _radius_of(RailType.CURVE_R),
+    RailType.CURVE_R_LARGE: _radius_of(RailType.CURVE_R_LARGE),
+}
+INCLINE_LEN = _TRACK_XFORM[RailType.INCLINE_START][0]
+
+# 交差レールの直交アーム（8の字が使う。DB の joints[2:] が真実源）
+_CROSS_ARM_NEG = next(  # y<0 側 (53, -53, 270°)
+    j for j in RAIL_GEOMETRY_DB[RailType.CROSSING].joints[2:] if j.y < 0)
+_CROSS_ARM_POS = next(  # y>0 側 (53, +53, 90°)
+    j for j in RAIL_GEOMETRY_DB[RailType.CROSSING].joints[2:] if j.y > 0)
+
+# ピース = (RailType, flipped)。flipped=True のカーブは右旋回（鏡映連結）。
 Piece = Tuple[RailType, bool]
 
 
 def _unit(deg: float) -> Tuple[float, float]:
     a = math.radians(deg)
     return math.cos(a), math.sin(a)
+
+
+# ============================================================
+# ウォーカー（DB の変換をワールド座標に適用するだけの汎用実装）
+# ============================================================
 
 
 class _Walker:
@@ -84,64 +153,52 @@ class _Walker:
             "flipped": flipped,
         })
 
-    def _sample_line(self, x0: float, y0: float, x1: float, y1: float) -> None:
-        dist = math.hypot(x1 - x0, y1 - y0)
-        steps = max(2, int(dist / 15.0))
-        for i in range(steps + 1):
-            t = i / steps
-            self.samples.append(
-                (self._piece_idx, x0 + (x1 - x0) * t, y0 + (y1 - y0) * t))
-
-    def _advance_straight(self, length: float) -> None:
-        x0, y0 = self.x, self.y
-        ux, uy = _unit(self.h)
-        self.x += length * ux
-        self.y += length * uy
-        self._sample_line(x0, y0, self.x, self.y)
-
     def add(self, rt: RailType, flipped: bool = False) -> None:
-        if rt in STRAIGHT_LEN:
-            self._emit(rt, self.z, False)
-            self._advance_straight(STRAIGHT_LEN[rt])
-        elif rt in CURVE_RADIUS:
-            self._emit(rt, self.z, flipped)
-            R = CURVE_RADIUS[rt]
-            if not flipped:
-                # 左旋回: 中心 = pos + R*u(h+90)
-                cx = self.x + R * _unit(self.h + 90.0)[0]
-                cy = self.y + R * _unit(self.h + 90.0)[1]
-                a0 = self.h - 90.0          # 中心→始点の角度
-                sweep = CURVE_ANGLE
-                self.h += CURVE_ANGLE
-            else:
-                # 右旋回: 中心 = pos + R*u(h-90)
-                cx = self.x + R * _unit(self.h - 90.0)[0]
-                cy = self.y + R * _unit(self.h - 90.0)[1]
-                a0 = self.h + 90.0
-                sweep = -CURVE_ANGLE
-                self.h -= CURVE_ANGLE
-            # 弧に沿ってサンプリング
+        """
+        rail_db 由来の走行変換を適用する（独自ジオメトリは持たない）。
+        flipped は進行軸に対する鏡映連結（カーブの左右反転）。
+        """
+        xf = _TRACK_XFORM.get(rt)
+        if xf is None:
+            return  # 橋脚などの非軌道ピースは add_pier を使う
+        ex, ey, ea, dz = xf
+        if flipped:
+            ey, ea = -ey, -ea
+
+        self._emit(rt, self.z, flipped)
+
+        c, s = _unit(self.h)
+        x0, y0 = self.x, self.y
+
+        if abs(ea) < 1e-9:
+            # 直進ピース
+            nx = x0 + ex * c - ey * s
+            ny = y0 + ex * s + ey * c
+            dist = math.hypot(nx - x0, ny - y0)
+            steps = max(2, int(dist / 15.0))
+            for i in range(steps + 1):
+                t = i / steps
+                self.samples.append(
+                    (self._piece_idx, x0 + (nx - x0) * t, y0 + (ny - y0) * t))
+        else:
+            # 円弧ピース: 半径は DB の出口座標から導出（p(t)=(R sinθt, R(1-cosθt))）
+            radius = (ex * ex + ey * ey) / (2.0 * ey)  # 符号付き
             steps = 4
             for i in range(1, steps + 1):
-                a = a0 + sweep * i / steps
-                self.samples.append(
-                    (self._piece_idx,
-                     cx + R * _unit(a)[0], cy + R * _unit(a)[1]))
-            a1 = a0 + sweep
-            self.x = cx + R * _unit(a1)[0]
-            self.y = cy + R * _unit(a1)[1]
-        elif rt == RailType.INCLINE_START:
-            self._emit(rt, self.z, False)
-            self._advance_straight(INCLINE_LEN)
-            self.z += 1
-        elif rt == RailType.INCLINE_END:
-            self._emit(rt, self.z, False)
-            self._advance_straight(INCLINE_LEN)
-            self.z -= 1
-        elif rt == RailType.CROSSING:
-            # 交差: 主軸を直線106mmとして通過（直交軸は snap_to で通過する）
-            self._emit(rt, self.z, False)
-            self._advance_straight(106.0)
+                th = math.radians(ea) * i / steps
+                lx = radius * math.sin(th)
+                ly = radius * (1.0 - math.cos(th))
+                self.samples.append((
+                    self._piece_idx,
+                    x0 + lx * c - ly * s,
+                    y0 + lx * s + ly * c,
+                ))
+            nx = x0 + ex * c - ey * s
+            ny = y0 + ex * s + ey * c
+
+        self.x, self.y = nx, ny
+        self.h += ea
+        self.z += dz
         self.points.append((self.x, self.y))
 
     def snap_to(self, x: float, y: float, h: float) -> None:
@@ -227,6 +284,11 @@ def _rotate_and_center(
     return out
 
 
+# ============================================================
+# テンプレート構成
+# ============================================================
+
+
 def _arc_sequence(std_avail: int, large_avail: int) -> Optional[List[Piece]]:
     """180°アーク1本分（左カーブ8ピース）。同一構成を2本使う。"""
     per_std = min(8, std_avail // 2)
@@ -238,7 +300,6 @@ def _arc_sequence(std_avail: int, large_avail: int) -> Optional[List[Piece]]:
 
 
 # ウィグルモチーフ: 正味旋回角 0 のカーブ列（L=左, R=右）
-# (モチーフ, 消費カーブ本数)
 _WIGGLE_MOTIFS: List[List[Piece]] = [
     [(RailType.CURVE_R, False), (RailType.CURVE_R, True)],                # S字 LR
     [(RailType.CURVE_R, True), (RailType.CURVE_R, False)],                # S字 RL
@@ -250,18 +311,18 @@ _WIGGLE_MOTIFS: List[List[Piece]] = [
 
 
 def _build_side(
-    s_use: int,
-    h_use: int,
+    straight_counts: Dict[RailType, int],
     wiggle_budget: int,
     rng: random.Random,
 ) -> List[Piece]:
     """
     対辺に使う 1 辺分のピース列を構築する（両辺で同一列を使用）。
-    直線ユニット + ウィグルモチーフをランダム順に並べる。正味旋回角は常に 0。
+    直線プール（DB由来: straight/stop/half/quarter…）+ ウィグルモチーフを
+    ランダム順に並べる。正味旋回角は常に 0。
     """
     units: List[List[Piece]] = []
-    units += [[(RailType.STRAIGHT, False)] for _ in range(s_use)]
-    units += [[(RailType.STRAIGHT_HALF, False)] for _ in range(h_use)]
+    for rt, n in straight_counts.items():
+        units += [[(rt, False)] for _ in range(n)]
 
     remaining = wiggle_budget
     while remaining >= 2:
@@ -305,12 +366,13 @@ def _try_build_figure8(inv: Dict[RailType, int]) -> Optional[_Walker]:
     本物の8の字: 交差レールを中心に、左旋回ループと右旋回ループを直交させる。
 
     幾何学的検証（机上計算済み）:
-      交差(W→E) → ハーフ → 左カーブ×12(+270°) → ハーフ → 交差の側腕(53,53)に
+      交差(W→E) → ハーフ → 左カーブ×12(+270°) → ハーフ → 交差の側腕に
       誤差(3,-3)mm で到達 → 交差を直交方向に通過(snap) → ハーフ →
       右カーブ×12(-270°) → ハーフ → W腕(0,0)に誤差(3,-3)mm で帰着。
       接合誤差 4.24mm ≤ 仕様許容 10mm。
 
     必要部材: 交差1 + 標準カーブ24 + ハーフ直線4
+    アーム座標は RAIL_GEOMETRY_DB[CROSSING].joints[2:] を真実源とする。
     """
     if inv.get(RailType.CROSSING, 0) < 1:
         return None
@@ -319,6 +381,10 @@ def _try_build_figure8(inv: Dict[RailType, int]) -> Optional[_Walker]:
     if inv.get(RailType.STRAIGHT_HALF, 0) < 4:
         return None
 
+    arm_in = _CROSS_ARM_POS    # 進入する側腕 (53, +53), 外向き90°
+    arm_out = _CROSS_ARM_NEG   # 通過後に出る側腕 (53, -53), 外向き270°
+    entry_heading = (arm_in.angle + 180.0) % 360.0   # 側腕へ進入する向き = 270°
+
     w = _Walker()
     w.add(RailType.CROSSING)              # idx 0: 主軸 W→E を通過
     w.add(RailType.STRAIGHT_HALF)
@@ -326,15 +392,15 @@ def _try_build_figure8(inv: Dict[RailType, int]) -> Optional[_Walker]:
         w.add(RailType.CURVE_R)           # 左ループ +270°
     w.add(RailType.STRAIGHT_HALF)
 
-    # 交差の側腕 (53, 53) に向き 270° で到達しているか（許容誤差内）
-    if math.hypot(w.x - 53.0, w.y - 53.0) > CLOSE_DIST_MM:
+    # 交差の側腕に許容誤差内で到達しているか
+    if math.hypot(w.x - arm_in.x, w.y - arm_in.y) > CLOSE_DIST_MM:
         return None
-    hm = (w.h - 270.0) % 360.0
+    hm = (w.h - entry_heading) % 360.0
     if hm > CLOSE_ANGLE_DEG and hm < 360.0 - CLOSE_ANGLE_DEG:
         return None
 
-    # 交差を直交方向に通過して反対側の腕 (53, -53) から出る
-    w.snap_to(53.0, -53.0, 270.0)
+    # 交差を直交方向に通過して反対側の腕から出る（出射向き = 出口腕の外向き角）
+    w.snap_to(arm_out.x, arm_out.y, arm_out.angle)
 
     w.add(RailType.STRAIGHT_HALF)
     for _ in range(12):
@@ -345,7 +411,6 @@ def _try_build_figure8(inv: Dict[RailType, int]) -> Optional[_Walker]:
         return None
     if w.bbox_span() > MAX_BBOX_MM:
         return None
-    # 交差(idx 0)は他ピースと重なるのが正当
     if not w.no_self_intersection(exempt=frozenset({0})):
         return None
     return w
@@ -355,7 +420,7 @@ def _try_build_elevated(
     inv: Dict[RailType, int],
     arc: List[Piece],
 ) -> Optional[_Walker]:
-    """高架テンプレート（v2 から継続）: 坂→高架直線(Z=1)→坂 + 橋脚"""
+    """高架テンプレート: 坂→高架直線(Z=1)→坂 + 橋脚"""
     if inv.get(RailType.INCLINE_START, 0) < 1 or inv.get(RailType.INCLINE_END, 0) < 1:
         return None
     s_avail = inv.get(RailType.STRAIGHT, 0)
@@ -431,7 +496,7 @@ def _generate(
         placed = _build_open_preview(inv)
         return placed, False, {RailType.CURVE_R.value: shortage}
 
-    theta = rng.choice([i * 22.5 for i in range(16)])
+    theta = rng.choice([i * CURVE_ANGLE for i in range(16)])
 
     # 高架テーマ
     if theme == "elevated":
@@ -449,35 +514,36 @@ def _generate(
             return placed, True, {}
         # 部材不足ならコンパクトオーバルへフォールバック
 
-    # ---- 在庫予算の計算 ----
+    # ---- 在庫予算の計算（直線プールは DB 由来の STRAIGHT_TYPES 全種） ----
     used_std_in_arc = sum(1 for rt, _ in arc if rt == RailType.CURVE_R) * 2
     extra_std = std - used_std_in_arc            # ウィグルに使える標準カーブ
-    s_pairs = inv.get(RailType.STRAIGHT, 0) // 2
-    h_pairs = inv.get(RailType.STRAIGHT_HALF, 0) // 2
     wiggle_max = (extra_std // 2) // 2 * 2       # 片辺あたり（偶数に丸め）
+
+    pairs = {rt: inv.get(rt, 0) // 2 for rt in STRAIGHT_TYPES}
 
     # テーマ別パラメータ
     if theme == "figure8":          # コンパクト: 直線少なめ + ウィグル多め
-        s_target, h_target = min(s_pairs, 1), min(h_pairs, 1)
+        targets = {rt: min(p, 1) for rt, p in pairs.items()}
     else:                            # おまかせ / 高架フォールバック
-        s_target = rng.randint(0, s_pairs) if s_pairs > 0 else 0
-        h_target = rng.randint(0, h_pairs) if h_pairs > 0 else 0
+        targets = {rt: (rng.randint(0, p) if p > 0 else 0)
+                   for rt, p in pairs.items()}
 
-    # 辺の長さ制限
-    while s_target * 106 + h_target * 53 > MAX_SIDE_MM and s_target > 0:
-        s_target -= 1
-    while s_target * 106 + h_target * 53 > MAX_SIDE_MM and h_target > 0:
-        h_target -= 1
+    # 辺の長さ制限（長いピースから順に削る）
+    def _side_len() -> float:
+        return sum(STRAIGHT_LEN[rt] * n for rt, n in targets.items())
+
+    for rt in STRAIGHT_TYPES:  # 長さ降順に並んでいる
+        while _side_len() > MAX_SIDE_MM and targets[rt] > 0:
+            targets[rt] -= 1
 
     # ---- ウィグル付き生成（自己交差したらワイルドさを下げて再試行） ----
     best_walker: Optional[_Walker] = None
     for attempt in range(40):
-        # 試行が進むほどウィグル数を減らす（最後は 0 = 確実なオーバル）
         decay = max(0.0, 1.0 - attempt / 25.0)
         budget = int(wiggle_max * decay)
         if budget % 2 == 1:
             budget -= 1
-        side = _build_side(s_target, h_target, budget, rng)
+        side = _build_side(targets, budget, rng)
         walker = _try_chain(arc, side)
         if walker is not None:
             best_walker = walker

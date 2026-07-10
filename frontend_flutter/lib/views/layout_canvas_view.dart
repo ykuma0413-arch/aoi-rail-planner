@@ -117,10 +117,12 @@ class TrainPath {
         switch (rt) {
           case RailType.straightHalf:
             mm = 53.0;
+          case RailType.straightQuarter:
+            mm = 26.5;
           case RailType.straightDouble:
             mm = 212.0;
           default:
-            mm = 106.0;
+            mm = 106.0; // straight / stop_rail / incline / crossing 主軸
         }
         raw.add(_PathSeg.line(
             origin, Offset(math.cos(rot), math.sin(rot)), mm * _kScale));
@@ -654,10 +656,12 @@ class _LayoutPainter extends CustomPainter {
     switch (rt) {
       case RailType.straightHalf:
         lengthMm = 53.0;
+      case RailType.straightQuarter:
+        lengthMm = 26.5;
       case RailType.straightDouble:
         lengthMm = 212.0;
       default:
-        lengthMm = 106.0;
+        lengthMm = 106.0; // straight / stop_rail / incline
     }
     final len = lengthMm * _scale;
     final dir = Offset(math.cos(rot), math.sin(rot));

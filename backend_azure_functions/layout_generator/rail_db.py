@@ -136,6 +136,8 @@ RAIL_GEOMETRY_DB: Dict[RailType, RailGeometry] = {
             JointPoint(0.0, 0.0, 180.0, Polarity.FEMALE, z_offset=0),
             JointPoint(_S, 0.0, 0.0, Polarity.MALE, z_offset=0),
         ],
+        # 中間勾配は整数Zモデルでは表現不能（勾配途中の中間高さが必要）のため自動探索除外
+        excluded_from_auto=True,
         display_name="勾配中間レール",
     ),
     RailType.INCLINE_END: RailGeometry(
@@ -164,6 +166,7 @@ RAIL_GEOMETRY_DB: Dict[RailType, RailGeometry] = {
             JointPoint(_S, 0.0, 0.0, Polarity.MALE),
             JointPoint(_cx_r, _cy_r, _DA, Polarity.MALE),
         ],
+        excluded_from_auto=True,  # 分岐系: 単一閉ループ生成では扱えないため除外
         display_name="左分岐レール",
     ),
     RailType.SWITCH_RIGHT: RailGeometry(
@@ -173,6 +176,7 @@ RAIL_GEOMETRY_DB: Dict[RailType, RailGeometry] = {
             JointPoint(_S, 0.0, 0.0, Polarity.MALE),
             JointPoint(_cx_r, -_cy_r, -_DA % 360.0, Polarity.MALE),
         ],
+        excluded_from_auto=True,  # 分岐系: 単一閉ループ生成では扱えないため除外
         display_name="右分岐レール",
     ),
     RailType.BRIDGE_PIER_STANDARD: RailGeometry(
