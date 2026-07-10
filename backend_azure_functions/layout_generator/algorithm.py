@@ -213,11 +213,15 @@ class _Walker:
 
     def add_pier(self, rt: RailType) -> None:
         """現在位置に橋脚を置く（軌道ピースではないので前進しない）"""
+        self.add_pier_at(rt, self.x, self.y)
+
+    def add_pier_at(self, rt: RailType, x: float, y: float) -> None:
+        """指定位置に橋脚を置く（軌道チェーン完了後の一括設置用）"""
         self._piece_idx += 1
         self.placed.append({
             "rail_type": rt.value,
-            "origin_x": self.x,
-            "origin_y": self.y,
+            "origin_x": x,
+            "origin_y": y,
             "rotation": 0.0,
             "z_level": 0,
             "flipped": False,
@@ -484,13 +488,18 @@ def _try_build_elevated(
         + [RailType.BRIDGE_PIER_BLOCK] * piers_blk
     )
 
+    # 橋脚は設置位置だけ記録し、軌道チェーン完了後にまとめて emit する。
+    # （軌道ピースの合間に emit するとピース番号が飛び、
+    #   no_self_intersection の「配置順=物理隣接」前提が崩れるため）
+    pier_spots: List[Tuple[RailType, float, float]] = []
+
     for rt, fl in arc:
         walker.add(rt, fl)
     walker.add(RailType.INCLINE_START)
-    walker.add_pier(pier_queue.pop(0))
+    pier_spots.append((pier_queue.pop(0), walker.x, walker.y))
     for _ in range(n):
         walker.add(RailType.STRAIGHT)
-        walker.add_pier(pier_queue.pop(0))
+        pier_spots.append((pier_queue.pop(0), walker.x, walker.y))
     walker.add(RailType.INCLINE_END)
     for rt, fl in arc:
         walker.add(rt, fl)
@@ -499,6 +508,9 @@ def _try_build_elevated(
 
     if not walker.is_closed():
         return None
+
+    for rt_p, px, py in pier_spots:
+        walker.add_pier_at(rt_p, px, py)
     return walker
 
 
