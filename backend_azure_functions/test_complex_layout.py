@@ -34,6 +34,9 @@ CURVE_DEG = 22.5
 INCLINE = {"incline_start": 106.0, "incline_end": 106.0, "incline_middle": 106.0}
 CROSSING_LEN = 106.0
 PIERS = {"bridge_pier_standard", "bridge_pier_block"}
+# ポイントの主軸は直線106mm（本線として通過）。分岐アームは別扱い。
+SWITCH_MAIN = {"switch_left": 106.0, "switch_right": 106.0,
+               "auto_turnout": 106.0, "cross_point": 106.0}
 
 # ジョイント誤差は接続のたびに累積し得るため、許容を少し緩める
 JOINT_TOL = CLOSE_DIST_MM + 1.0
@@ -55,8 +58,9 @@ def piece_endpoints(p):
     if rt in PIERS:
         return None
 
-    if rt in STRAIGHT or rt in INCLINE or rt == "crossing":
-        length = STRAIGHT.get(rt) or INCLINE.get(rt) or CROSSING_LEN
+    if rt in STRAIGHT or rt in INCLINE or rt == "crossing" or rt in SWITCH_MAIN:
+        length = (STRAIGHT.get(rt) or INCLINE.get(rt) or SWITCH_MAIN.get(rt)
+                  or CROSSING_LEN)
         ux, uy = _u(h)
         return ((x, y), h, (x + length * ux, y + length * uy), h)
 

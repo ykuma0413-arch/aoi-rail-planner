@@ -94,6 +94,9 @@ class TrainPath {
           rt == RailType.bridgePierBlock) {
         continue; // 橋脚は経路に含まない
       }
+      if (rail.spur) {
+        continue; // 側線（行き止まり支線）は本線周回に含めない
+      }
       final origin = _worldToCanvas(rail.originX, rail.originY);
       final rot = rail.rotation * math.pi / 180.0;
 
@@ -627,7 +630,7 @@ class _LayoutPainter extends CustomPainter {
       return _renderCurve(
           canvas, origin, rot, rt == RailType.curveRLarge, rail.flipped, color, pass);
     }
-    if (rt == RailType.crossing) {
+    if (rt == RailType.crossing || rt == RailType.crossPoint) {
       final dir = Offset(math.cos(rot), math.sin(rot));
       final perp = Offset(-math.sin(rot), math.cos(rot));
       final end = origin + dir * (106.0 * _scale);
@@ -647,7 +650,61 @@ class _LayoutPainter extends CustomPainter {
         endOutwardAngle: rot,
       );
     }
+    if (rt == RailType.switchLeft ||
+        rt == RailType.switchRight ||
+        rt == RailType.autoTurnout ||
+        rt == RailType.switchY) {
+      return _renderSwitch(canvas, origin, rot, rt!, color, pass);
+    }
     return _renderStraight(canvas, origin, rot, rt, color, pass);
+  }
+
+  /// ポイントレール: 本線（直線106mm）+ 分岐カーブ（22.5°）。
+  /// Y字は両方向カーブ、それ以外は主軸直線+片側カーブ。
+  _JointPair _renderSwitch(Canvas canvas, Offset origin, double rot,
+      RailType rt, Color color, _Pass pass) {
+    final dir = Offset(math.cos(rot), math.sin(rot));
+    final radius = 103.0 * _scale;
+    const span = 22.5 * math.pi / 180.0;
+
+    // 分岐カーブ（origin から ±22.5°）を描く小ヘルパ
+    void branch(bool right) {
+      final center = right
+          ? origin + Offset(radius * math.cos(rot - math.pi / 2),
+              radius * math.sin(rot - math.pi / 2))
+          : origin + Offset(radius * math.cos(rot + math.pi / 2),
+              radius * math.sin(rot + math.pi / 2));
+      final start = right ? rot + math.pi / 2 : rot - math.pi / 2;
+      final sweep = right ? -span : span;
+      if (pass == _Pass.border) {
+        paintBandBorderArc(canvas, center, radius, start, sweep, _bandWidth * 0.85);
+      } else {
+        paintBandFillArc(canvas, center, radius, start, sweep, _bandWidth * 0.85, color);
+      }
+    }
+
+    if (rt == RailType.switchY) {
+      branch(false);
+      branch(true);
+    } else {
+      // 主軸（本線）直線
+      final end = origin + dir * (106.0 * _scale);
+      if (pass == _Pass.border) {
+        paintBandBorderLine(canvas, origin, end, _bandWidth);
+      } else {
+        paintBandFillLine(canvas, origin, end, _bandWidth, color);
+      }
+      branch(rt == RailType.switchRight);
+    }
+
+    // ジョイントは本線主軸（電車が通る軸）を返す
+    final end = origin + dir * (106.0 * _scale);
+    return _JointPair(
+      startPos: origin,
+      startOutwardAngle: rot + math.pi,
+      endPos: end,
+      endOutwardAngle: rot,
+    );
   }
 
   _JointPair _renderStraight(Canvas canvas, Offset origin, double rot,

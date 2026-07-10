@@ -30,6 +30,8 @@ class PlacedRail {
   final int zLevel;
   /// カーブの反転連結（true = 右旋回）
   final bool flipped;
+  /// 側線（スパー）ピース = 本線ではなく行き止まり支線。電車は走らない。
+  final bool spur;
 
   const PlacedRail({
     required this.railType,
@@ -38,6 +40,7 @@ class PlacedRail {
     required this.rotation,
     required this.zLevel,
     this.flipped = false,
+    this.spur = false,
   });
 
   factory PlacedRail.fromJson(Map<String, dynamic> j) => PlacedRail(
@@ -47,6 +50,7 @@ class PlacedRail {
         rotation: (j['rotation'] as num).toDouble(),
         zLevel: (j['z_level'] as num).toInt(),
         flipped: j['flipped'] as bool? ?? false,
+        spur: j['spur'] as bool? ?? false,
       );
 }
 

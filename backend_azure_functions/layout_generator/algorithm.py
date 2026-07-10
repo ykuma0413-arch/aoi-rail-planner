@@ -223,6 +223,14 @@ class _Walker:
             "flipped": False,
         })
 
+    def seed(self, x: float, y: float, h_deg: float, z: int) -> None:
+        """任意ポーズにカーソルを初期化する（側線=スパーの起点設定に使う）。"""
+        self.x = x
+        self.y = y
+        self.h = h_deg
+        self.z = z
+        self.points = [(x, y)]
+
     def is_closed(self) -> bool:
         """仕様 §4.1 の許容誤差（10mm / 2°）で閉路判定"""
         if self.z != 0:
@@ -458,6 +466,128 @@ def _try_build_elevated(
     return walker
 
 
+# ============================================================
+# 側線（スパー）: ポイントレールで本線から分岐する行き止まり
+# ============================================================
+
+
+def _grid_cells(samples: List[Tuple[int, float, float]]) -> Dict[Tuple[int, int], int]:
+    cells: Dict[Tuple[int, int], int] = {}
+    for idx, x, y in samples:
+        cells[(int(x // GRID_MM), int(y // GRID_MM))] = idx
+    return cells
+
+
+def _try_add_spur(
+    main: _Walker,
+    used: Dict[RailType, int],
+    inv: Dict[RailType, int],
+    rng: random.Random,
+) -> Optional[Tuple[List[dict], List[Tuple[float, float]], dict]]:
+    """
+    本線ループの直線ピース1本をポイント(switch_left/right)に置換し、
+    そこから行き止まりの側線を伸ばす。
+
+    ポイントの主軸は直線106mmと幾何的に同一なので、本線の閉路性は不変
+    （is_closed の再検証は不要）。側線は開放端を1つ持つ付属チェーンとして
+    本線との非重なり・領域内のみを検証する。
+
+    Returns: (統合placed, 統合points, 側線の開放端dict) / 不成立なら None
+    """
+    # 使えるポイントを選ぶ
+    switch_type = None
+    for st in (RailType.SWITCH_LEFT, RailType.SWITCH_RIGHT):
+        if inv.get(st, 0) - used.get(st, 0) > 0:
+            switch_type = st
+            break
+    if switch_type is None:
+        return None
+
+    # 側線に使える余剰の直線・カーブ
+    spare_straight = inv.get(RailType.STRAIGHT, 0) - used.get(RailType.STRAIGHT, 0)
+    spare_curve = inv.get(RailType.CURVE_R, 0) - used.get(RailType.CURVE_R, 0)
+    if spare_straight + spare_curve < 1:
+        return None
+
+    branch = RAIL_GEOMETRY_DB[switch_type].joints[2]  # 分岐側ジョイント（曲線出口）
+    main_cells = _grid_cells(main.samples)
+
+    # 本線の「素の直線(106mm・非スパー)」ピースを置換候補にする
+    cand = [i for i, p in enumerate(main.placed)
+            if p["rail_type"] == RailType.STRAIGHT.value]
+    rng.shuffle(cand)
+
+    # 側線構成の候補（短い順に試す。分岐で既に22.5°曲がっているので直線主体）
+    spur_configs: List[List[RailType]] = []
+    for ns in range(min(spare_straight, 3), 0, -1):
+        spur_configs.append([RailType.STRAIGHT] * ns)
+    if spare_curve >= 1 and spare_straight >= 1:
+        spur_configs.insert(0, [RailType.CURVE_R, RailType.STRAIGHT])
+    if not spur_configs:
+        spur_configs = [[RailType.CURVE_R]] if spare_curve >= 1 else []
+
+    for idx in cand:
+        p = main.placed[idx]
+        rot = math.radians(p["rotation"])
+        c, s = math.cos(rot), math.sin(rot)
+        bx = p["origin_x"] + branch.x * c - branch.y * s
+        by = p["origin_y"] + branch.x * s + branch.y * c
+        bh = (p["rotation"] + branch.angle) % 360.0
+
+        for pieces in spur_configs:
+            spur = _Walker()
+            spur.seed(bx, by, bh, p["z_level"])
+            for rt in pieces:
+                spur.add(rt)
+
+            # 領域内チェック
+            allx = [pt[0] for pt in main.points + spur.points]
+            ally = [pt[1] for pt in main.points + spur.points]
+            if max(max(allx) - min(allx), max(ally) - min(ally)) > MAX_BBOX_MM:
+                continue
+
+            # 側線 vs 本線 の重なりチェック（分岐直後の1セルだけ許容）
+            ok = True
+            skip = 2  # 分岐付近の最初の数サンプルは本線と近接するので許容
+            spur_cells: Dict[Tuple[int, int], int] = {}
+            for k, (sidx, x, y) in enumerate(spur.samples):
+                cell = (int(x // GRID_MM), int(y // GRID_MM))
+                if k >= skip and cell in main_cells:
+                    ok = False
+                    break
+                # 側線内の自己交差
+                if cell in spur_cells and abs(spur_cells[cell] - sidx) > 1:
+                    ok = False
+                    break
+                spur_cells[cell] = sidx
+            if not ok:
+                continue
+
+            # 成立: 本線の直線をポイントに置換し、側線ピースを spur フラグ付きで追加
+            new_placed = [dict(pp) for pp in main.placed]
+            new_placed[idx]["rail_type"] = switch_type.value
+            for sp in spur.placed:
+                sp2 = dict(sp)
+                sp2["spur"] = True
+                new_placed.append(sp2)
+            open_end = {"x": spur.x, "y": spur.y, "heading": spur.h % 360.0}
+            new_points = list(main.points) + spur.points
+            return new_placed, new_points, open_end
+
+    return None
+
+
+def _used_counts(placed: List[dict]) -> Dict[RailType, int]:
+    counts: Dict[RailType, int] = {}
+    for p in placed:
+        try:
+            rt = RailType(p["rail_type"])
+        except ValueError:
+            continue
+        counts[rt] = counts.get(rt, 0) + 1
+    return counts
+
+
 def _build_open_preview(inv: Dict[RailType, int]) -> List[dict]:
     """カーブ不足時のプレビュー: 持っているパーツで開いたアークを描く"""
     w = _Walker()
@@ -557,7 +687,18 @@ def _generate(
         placed = _build_open_preview(inv)
         return placed, False, {RailType.CURVE_R.value: 1}
 
-    placed = _rotate_and_center(best_walker.placed, best_walker.points, theta)
+    # ---- 側線（スパー）: ポイントレールがあれば本線に行き止まり側線を付ける ----
+    result_placed = best_walker.placed
+    result_points = best_walker.points
+    if theme != "figure8" and (
+            inv.get(RailType.SWITCH_LEFT, 0) > 0
+            or inv.get(RailType.SWITCH_RIGHT, 0) > 0):
+        used = _used_counts(best_walker.placed)
+        spur = _try_add_spur(best_walker, used, inv, rng)
+        if spur is not None:
+            result_placed, result_points, _open_end = spur
+
+    placed = _rotate_and_center(result_placed, result_points, theta)
     return placed, True, {}
 
 
