@@ -2,6 +2,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import '../models/api_models.dart';
 import '../models/rail_type.dart';
+import '../rail/train_route.dart';
 import 'widgets/mini_rail_icon.dart';
 
 /// Z軸高さ別カラーコード定義（仕様書 §3.3 準拠）
@@ -23,187 +24,11 @@ Offset _worldToCanvas(double mmX, double mmY) {
 }
 
 // ============================================================
-// 走行経路モデル
-// ============================================================
-
-class _PathSeg {
-  final double length;
-  final bool isArc;
-  // 直線用
-  final Offset start;
-  final Offset dirU;
-  // 弧用
-  final Offset center;
-  final double radius;
-  final double startAngle;
-  final double angSign; // +1 = CCW(左), -1 = CW(右)
-
-  const _PathSeg.line(this.start, this.dirU, this.length)
-      : isArc = false,
-        center = Offset.zero,
-        radius = 0,
-        startAngle = 0,
-        angSign = 0;
-
-  const _PathSeg.arc(this.center, this.radius, this.startAngle, this.angSign,
-      this.length)
-      : isArc = true,
-        start = Offset.zero,
-        dirU = Offset.zero;
-
-  Offset posAt(double s) {
-    if (!isArc) return start + dirU * s;
-    final a = startAngle + angSign * (s / radius);
-    return center + Offset(radius * math.cos(a), radius * math.sin(a));
-  }
-
-  double headingAt(double s) {
-    if (!isArc) return math.atan2(dirU.dy, dirU.dx);
-    final a = startAngle + angSign * (s / radius);
-    return a + angSign * math.pi / 2;
-  }
-}
-
-/// 生成されたコースの走行経路。
-/// ピースの出力順・向きに依存せず、描画された端点同士を最近傍マッチングで
-/// 貪欲に連結する（逆向き配置も自動で反転して追従）。これにより新旧どちらの
-/// バックエンドが返したレイアウトでも、電車は必ず「描画された線路の上」を走る。
-class TrainPath {
-  final List<_PathSeg> segments;
-  final double totalLength;
-
-  TrainPath._(this.segments, this.totalLength);
-
-  /// セグメントの向きを反転する（line: 始点終点入替 / arc: 掃引方向反転）
-  static _PathSeg _reverseSeg(_PathSeg s) {
-    if (!s.isArc) {
-      final end = s.posAt(s.length);
-      return _PathSeg.line(
-          end, Offset(-s.dirU.dx, -s.dirU.dy), s.length);
-    }
-    final endAngle = s.startAngle + s.angSign * (s.length / s.radius);
-    return _PathSeg.arc(s.center, s.radius, endAngle, -s.angSign, s.length);
-  }
-
-  factory TrainPath.fromRails(List<PlacedRail> rails) {
-    // 1. 各ピースの素のセグメント（描画方向のまま）を作る
-    final raw = <_PathSeg>[];
-    for (final rail in rails) {
-      final rt = RailType.fromApiValue(rail.railType);
-      if (rt == RailType.bridgePierStandard ||
-          rt == RailType.bridgePierBlock) {
-        continue; // 橋脚は経路に含まない
-      }
-      if (rail.spur) {
-        continue; // 側線（行き止まり支線）は本線周回に含めない
-      }
-      final origin = _worldToCanvas(rail.originX, rail.originY);
-      final rot = rail.rotation * math.pi / 180.0;
-
-      if (rt == RailType.curveR || rt == RailType.curveRLarge) {
-        final radius = (rt == RailType.curveRLarge ? 206.0 : 103.0) * _kScale;
-        const span = 22.5 * math.pi / 180.0;
-        final len = radius * span;
-        if (!rail.flipped) {
-          final center = origin +
-              Offset(radius * math.cos(rot + math.pi / 2),
-                  radius * math.sin(rot + math.pi / 2));
-          raw.add(_PathSeg.arc(center, radius, rot - math.pi / 2, 1, len));
-        } else {
-          final center = origin +
-              Offset(radius * math.cos(rot - math.pi / 2),
-                  radius * math.sin(rot - math.pi / 2));
-          raw.add(_PathSeg.arc(center, radius, rot + math.pi / 2, -1, len));
-        }
-      } else {
-        double mm;
-        switch (rt) {
-          case RailType.straightHalf:
-            mm = 53.0;
-          case RailType.straightQuarter:
-            mm = 26.5;
-          case RailType.straightDouble:
-            mm = 212.0;
-          default:
-            mm = 106.0; // straight / stop_rail / incline / crossing 主軸
-        }
-        raw.add(_PathSeg.line(
-            origin, Offset(math.cos(rot), math.sin(rot)), mm * _kScale));
-      }
-    }
-    if (raw.isEmpty) return TrainPath._([], 0);
-
-    // 2. 端点の最近傍マッチングで貪欲連結（逆向き許容）
-    final segs = <_PathSeg>[];
-    var total = 0.0;
-    void push(_PathSeg s) {
-      segs.add(s);
-      total += s.length;
-    }
-
-    final used = List<bool>.filled(raw.length, false);
-    used[0] = true;
-    push(raw[0]);
-    var curEnd = raw[0].posAt(raw[0].length);
-
-    for (var n = 1; n < raw.length; n++) {
-      var bestIdx = -1;
-      var bestDist = double.infinity;
-      var bestRev = false;
-      for (var i = 0; i < raw.length; i++) {
-        if (used[i]) continue;
-        final s = raw[i];
-        final dStart = (s.posAt(0) - curEnd).distance;
-        final dEnd = (s.posAt(s.length) - curEnd).distance;
-        if (dStart < bestDist) {
-          bestDist = dStart;
-          bestIdx = i;
-          bestRev = false;
-        }
-        if (dEnd < bestDist) {
-          bestDist = dEnd;
-          bestIdx = i;
-          bestRev = true;
-        }
-      }
-      if (bestIdx < 0) break;
-      used[bestIdx] = true;
-      final chosen = bestRev ? _reverseSeg(raw[bestIdx]) : raw[bestIdx];
-      // 隙間（交差の直交通過・許容誤差）は直線でブリッジ
-      final entry = chosen.posAt(0);
-      final gap = (entry - curEnd).distance;
-      if (gap > 2.0) {
-        push(_PathSeg.line(curEnd, (entry - curEnd) / gap, gap));
-      }
-      push(chosen);
-      curEnd = chosen.posAt(chosen.length);
-    }
-
-    // 3. 閉ループの最終接合もブリッジ
-    final firstStart = segs.first.posAt(0);
-    final endGap = (firstStart - curEnd).distance;
-    if (endGap > 2.0) {
-      push(_PathSeg.line(curEnd, (firstStart - curEnd) / endGap, endGap));
-    }
-    return TrainPath._(segs, total);
-  }
-
-  (Offset, double) sample(double d) {
-    if (segments.isEmpty || totalLength <= 0) return (Offset.zero, 0);
-    var s = d % totalLength;
-    if (s < 0) s += totalLength;
-    for (final seg in segments) {
-      if (s <= seg.length) return (seg.posAt(s), seg.headingAt(s));
-      s -= seg.length;
-    }
-    final last = segments.last;
-    return (last.posAt(last.length), last.headingAt(last.length));
-  }
-}
-
-// ============================================================
 // メインビュー
 // ============================================================
+// 走行経路のモデル（本線周回 + ポイントでの側線往復 = 分岐進路選択）は
+// lib/rail/train_route.dart に描画非依存の純粋モデルとして実装されている。
+// ここでは TrainItinerary から各車両のポーズを取り出して描くだけ。
 
 /// 2D Canvasレイアウト描画ビュー
 /// - Z軸に応じた濃淡表現 / 不足パーツの赤明滅
@@ -234,16 +59,19 @@ class _LayoutCanvasViewState extends State<LayoutCanvasView>
   late AnimationController _trainController;
   TransformationController? _viewController;
 
-  TrainPath? _trainPath;
+  TrainItinerary? _itinerary;
   double _speed = 1.0;
   bool _running = true;
 
   static const double _basePxPerSec = 46.0; // 1倍速 ≈ レール1本/秒
+  static const double _carSpacingMm = 26.0 / _kScale; // 連結間隔（車両中心間）
+
+  double get _speedMmPerSec => _basePxPerSec * _speed / _kScale;
 
   bool get _trainEnabled =>
       widget.showTrain &&
       widget.assemblyStep == null &&
-      (_trainPath?.totalLength ?? 0) > 0;
+      (_itinerary?.movingLength ?? 0) > 0;
 
   @override
   void initState() {
@@ -261,19 +89,38 @@ class _LayoutCanvasViewState extends State<LayoutCanvasView>
   }
 
   void _rebuildPath() {
-    _trainPath = TrainPath.fromRails(widget.layout.placedRails);
+    _itinerary = TrainItinerary.fromRails(widget.layout.placedRails);
     _applyTrainSpeed();
   }
 
   void _applyTrainSpeed() {
-    final total = _trainPath?.totalLength ?? 0;
-    if (total <= 0) return;
-    final seconds = total / (_basePxPerSec * _speed);
+    final itin = _itinerary;
+    if (itin == null || itin.movingLength <= 0) return;
+    final seconds = itin.lapSeconds(_speedMmPerSec);
     _trainController.duration =
         Duration(milliseconds: (seconds * 1000).round());
     if (_running && widget.assemblyStep == null && widget.showTrain) {
       _trainController.repeat();
     }
+  }
+
+  /// 現在フレームの各車両ポーズ（canvas座標）。先頭が機関車。
+  List<(Offset, double)>? _sampleTrainPoses() {
+    if (!_trainEnabled) return null;
+    final itin = _itinerary!;
+    final v = _speedMmPerSec;
+    final t = _trainController.value * itin.lapSeconds(v);
+    final st = itin.engineStateAt(t, v);
+    return [
+      for (var i = 0; i < 3; i++)
+        () {
+          final p = itin.poseBehind(st, i * _carSpacingMm);
+          return (
+            _worldToCanvas(p.position.dx, p.position.dy),
+            p.heading,
+          );
+        }(),
+    ];
   }
 
   @override
@@ -338,11 +185,7 @@ class _LayoutCanvasViewState extends State<LayoutCanvasView>
                       placedRails: widget.layout.placedRails,
                       missingParts: widget.layout.missingParts,
                       suggestOpacity: _blinkAnim.value,
-                      trainPath: _trainEnabled ? _trainPath : null,
-                      trainDistance: _trainEnabled
-                          ? _trainController.value *
-                              (_trainPath?.totalLength ?? 0)
-                          : null,
+                      trainPoses: _sampleTrainPoses(),
                       assemblyStep: widget.assemblyStep,
                     ),
                   ),
@@ -416,8 +259,9 @@ class _LayoutPainter extends CustomPainter {
   final List<PlacedRail> placedRails;
   final List<MissingPart> missingParts;
   final double suggestOpacity;
-  final TrainPath? trainPath;
-  final double? trainDistance;
+
+  /// 各車両の (canvas座標, 向きrad)。先頭が機関車。null = 電車非表示
+  final List<(Offset, double)>? trainPoses;
   final int? assemblyStep;
 
   static const double _gridOriginMm = 900.0;
@@ -431,8 +275,7 @@ class _LayoutPainter extends CustomPainter {
     required this.placedRails,
     required this.missingParts,
     required this.suggestOpacity,
-    this.trainPath,
-    this.trainDistance,
+    this.trainPoses,
     this.assemblyStep,
   });
 
@@ -542,21 +385,19 @@ class _LayoutPainter extends CustomPainter {
   // ---------- 電車 ----------
 
   void _drawTrain(Canvas canvas) {
-    final path = trainPath;
-    final dist = trainDistance;
-    if (path == null || dist == null || path.totalLength <= 0) return;
+    final poses = trainPoses;
+    if (poses == null || poses.isEmpty) return;
 
     // 先頭から: 赤い機関車 + 黄色・緑の客車
-    const carSpacing = 26.0;
     final cars = [
       (const Color(0xFFE53935), 24.0, 13.0, true),
       (const Color(0xFFFFB300), 21.0, 12.0, false),
       (const Color(0xFF43A047), 21.0, 12.0, false),
     ];
 
-    for (var i = cars.length - 1; i >= 0; i--) {
+    for (var i = math.min(cars.length, poses.length) - 1; i >= 0; i--) {
       final (color, w, h, isEngine) = cars[i];
-      final (pos, heading) = path.sample(dist - i * carSpacing);
+      final (pos, heading) = poses[i];
 
       canvas.save();
       canvas.translate(pos.dx, pos.dy);
@@ -810,6 +651,6 @@ class _LayoutPainter extends CustomPainter {
   bool shouldRepaint(_LayoutPainter old) =>
       old.suggestOpacity != suggestOpacity ||
       old.placedRails != placedRails ||
-      old.trainDistance != trainDistance ||
+      old.trainPoses != trainPoses ||
       old.assemblyStep != assemblyStep;
 }
