@@ -34,7 +34,8 @@ jobs:
 
       - name: Analyze rail/route layer
         working-directory: frontend_flutter
-        run: flutter analyze lib/rail lib/views/layout_canvas_view.dart test
+        # 既存コードの deprecation info では落とさない（warning/error のみ致命）
+        run: flutter analyze --no-fatal-infos lib/rail lib/views/layout_canvas_view.dart test
 
       - name: Run simulator tests (render + train route)
         working-directory: frontend_flutter

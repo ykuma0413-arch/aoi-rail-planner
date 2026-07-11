@@ -21,9 +21,10 @@ const double _curveLen = _r * _spanRad; // ≈ 40.44mm
 /// バックエンド walker と同じ規約でピースを連結配置するテスト用ビルダー。
 /// 非反転カーブ: ローカル出口 (R sin a, R(1-cos a))・heading +22.5°。
 class _Builder {
-  double x, y, h; // mm, deg
+  double x, y; // mm
+  double h = 0; // deg
   final rails = <PlacedRail>[];
-  _Builder(this.x, this.y, [this.h = 0]);
+  _Builder(this.x, this.y);
 
   PlacedRail _emit(String type, {bool flipped = false, bool spur = false}) {
     final rail = PlacedRail(
