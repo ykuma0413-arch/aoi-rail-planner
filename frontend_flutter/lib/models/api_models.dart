@@ -32,6 +32,10 @@ class PlacedRail {
   final bool flipped;
   /// 側線（スパー）ピース = 本線ではなく行き止まり支線。電車は走らない。
   final bool spur;
+  /// 側線チェーンの先頭ピースにのみ設定される、分岐元ポイントの
+  /// placedRails 内インデックス。組み立てガイドが正しい接続先を
+  /// 案内するために使う（本線ピースや側線2本目以降は null）。
+  final int? attachIndex;
 
   const PlacedRail({
     required this.railType,
@@ -41,6 +45,7 @@ class PlacedRail {
     required this.zLevel,
     this.flipped = false,
     this.spur = false,
+    this.attachIndex,
   });
 
   factory PlacedRail.fromJson(Map<String, dynamic> j) => PlacedRail(
@@ -51,6 +56,7 @@ class PlacedRail {
         zLevel: (j['z_level'] as num).toInt(),
         flipped: j['flipped'] as bool? ?? false,
         spur: j['spur'] as bool? ?? false,
+        attachIndex: (j['attach_index'] as num?)?.toInt(),
       );
 }
 

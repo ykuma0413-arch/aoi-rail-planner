@@ -5,8 +5,9 @@ import 'layout_canvas_view.dart';
 import 'widgets/mini_rail_icon.dart';
 
 /// じゅんばんに組み立てるモード
-/// チェーン順（エンジンの出力順 = 実際に繋がる順）で1ピースずつハイライトし、
-/// 親子で迷わず組めるようにガイドする。
+/// 本線はチェーン順（エンジンの出力順 = 実際に繋がる順）で1ピースずつ
+/// ハイライトする。側線（スパー）のチェーン先頭ピースだけは本線の直前
+/// ピースには繋がらないため、attachIndex を使って正しい分岐元を案内する。
 class AssemblyScreen extends StatefulWidget {
   final LayoutResponse layout;
 
@@ -40,6 +41,14 @@ class _AssemblyScreenState extends State<AssemblyScreen> {
     final name = rt?.displayName ?? piece.railType;
     if (rt == RailType.bridgePierStandard || rt == RailType.bridgePierBlock) {
       return '$name を おこう！';
+    }
+    // 側線（スパー）チェーンの先頭ピースは、本線の直前ピースではなく
+    // attachIndex が指すポイントレールの分岐から繋がる。
+    if (piece.spur && piece.attachIndex != null) {
+      final anchor = widget.layout.placedRails[piece.attachIndex!];
+      final anchorRt = RailType.fromApiValue(anchor.railType);
+      final anchorName = anchorRt?.displayName ?? anchor.railType;
+      return '${piece.attachIndex! + 1}番目の $anchorName の\n枝分かれから $name をつなげよう！（本線とはべつだよ）';
     }
     if (_step == 0) {
       return 'さいしょの $name を おこう！';

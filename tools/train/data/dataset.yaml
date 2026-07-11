@@ -3,7 +3,7 @@ path: ./data
 train: images/train
 val:   images/val
 
-nc: 14  # クラス数（RailType種類数）
+nc: 19  # クラス数（RailType種類数。rail_db.RailType 全種と一致させること）
 
 names:
   0:  straight
@@ -20,6 +20,11 @@ names:
   11: bridge_pier_block
   12: flexible
   13: straight_double
+  14: straight_quarter
+  15: stop_rail
+  16: switch_y
+  17: auto_turnout
+  18: cross_point
 
 # アノテーション形式: YOLO形式 (class_id cx cy w h, 正規化座標)
 # ラベルファイルは data/labels/train/*.txt, data/labels/val/*.txt に配置

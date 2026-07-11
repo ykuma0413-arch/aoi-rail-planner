@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../models/api_models.dart';
 
-/// 工事中画面（サジェスト画面）
+/// パーツ不足画面（サジェスト画面）
 /// is_suggested_layout: true またはタイムアウトフォールバック時にナビゲーション。
 class SuggestScreen extends StatelessWidget {
   final LayoutResponse? response;
@@ -26,14 +26,14 @@ class SuggestScreen extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // 工事中アイコン
+            // パーツ不足アイコン（「工事中」はアプリ未実装と誤解されるため変更）
             Center(
               child: Column(
                 children: [
-                  const Text('🚧', style: TextStyle(fontSize: 64)),
+                  const Text('🧩', style: TextStyle(fontSize: 64)),
                   const SizedBox(height: 8),
                   const Text(
-                    '工事中...',
+                    'パーツが足りません',
                     style: TextStyle(
                       fontSize: 24,
                       fontWeight: FontWeight.bold,

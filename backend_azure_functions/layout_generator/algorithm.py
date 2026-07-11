@@ -526,46 +526,57 @@ def _grid_cells(samples: List[Tuple[int, float, float]]) -> Dict[Tuple[int, int]
     return cells
 
 
-def _try_add_spur(
-    main: _Walker,
-    used: Dict[RailType, int],
+# 直線(106mm)を置換するタイプ: 主軸=joints[1]が直線と同一、分岐=joints[2]
+_STRAIGHT_SWITCH_TYPES = (RailType.SWITCH_LEFT, RailType.SWITCH_RIGHT,
+                          RailType.AUTO_TURNOUT)
+# 全ポイント種別（側線化の優先順）
+_ALL_SPUR_TYPES = (*_STRAIGHT_SWITCH_TYPES, RailType.SWITCH_Y)
+
+
+def _place_one_spur(
+    placed: List[dict],
+    points: List[Tuple[float, float]],
+    occupied: Dict[Tuple[int, int], int],
     inv: Dict[RailType, int],
+    used: Dict[RailType, int],
+    replaced: set,
     rng: random.Random,
-) -> Optional[Tuple[List[dict], List[Tuple[float, float]], dict]]:
+) -> Optional[Tuple[List[dict], List[Tuple[float, float]],
+                    Dict[Tuple[int, int], int], dict]]:
     """
-    本線ループの直線ピース1本をポイント(switch_left/right)に置換し、
-    そこから行き止まりの側線を伸ばす。
-
-    ポイントの主軸は直線106mmと幾何的に同一なので、本線の閉路性は不変
-    （is_closed の再検証は不要）。側線は開放端を1つ持つ付属チェーンとして
-    本線との非重なり・領域内のみを検証する。
-
-    Returns: (統合placed, 統合points, 側線の開放端dict) / 不成立なら None
+    在庫にまだ余裕があるポイント種別を1つ選び、置換可能な本線ピースに
+    はめ込んで側線を1本伸ばす。成立しなければその種別を使い切り扱いにして
+    次の種別で再帰的に試す（在庫にある種類・本数を可能な限り使い切るため）。
     """
-    # 使えるポイントを選ぶ
     switch_type = None
-    for st in (RailType.SWITCH_LEFT, RailType.SWITCH_RIGHT):
+    for st in _ALL_SPUR_TYPES:
         if inv.get(st, 0) - used.get(st, 0) > 0:
             switch_type = st
             break
     if switch_type is None:
         return None
 
-    # 側線に使える余剰の直線・カーブ
+    # switch_y は主軸(joints[1])が標準カーブ(非反転)の出口と同一なのでカーブを置換、
+    # それ以外は主軸が直線106mmと同一なので直線を置換する。
+    is_y = switch_type == RailType.SWITCH_Y
+    target_type = RailType.CURVE_R.value if is_y else RailType.STRAIGHT.value
+
     spare_straight = inv.get(RailType.STRAIGHT, 0) - used.get(RailType.STRAIGHT, 0)
     spare_curve = inv.get(RailType.CURVE_R, 0) - used.get(RailType.CURVE_R, 0)
     if spare_straight + spare_curve < 1:
-        return None
+        used[switch_type] = inv.get(switch_type, 0)
+        return _place_one_spur(placed, points, occupied, inv, used, replaced, rng)
 
-    branch = RAIL_GEOMETRY_DB[switch_type].joints[2]  # 分岐側ジョイント（曲線出口）
-    main_cells = _grid_cells(main.samples)
+    branch = RAIL_GEOMETRY_DB[switch_type].joints[2]  # 分岐側ジョイント
 
-    # 本線の「素の直線(106mm・非スパー)」ピースを置換候補にする
-    cand = [i for i, p in enumerate(main.placed)
-            if p["rail_type"] == RailType.STRAIGHT.value]
+    cand = [i for i, p in enumerate(placed)
+            if i not in replaced
+            and p["rail_type"] == target_type
+            and not p.get("spur")
+            and (not is_y or not p.get("flipped", False))]
     rng.shuffle(cand)
 
-    # 側線構成の候補（短い順に試す。分岐で既に22.5°曲がっているので直線主体）
+    # 側線構成の候補（短い順に試す。分岐で既に曲がっているので直線主体）
     spur_configs: List[List[RailType]] = []
     for ns in range(min(spare_straight, 3), 0, -1):
         spur_configs.append([RailType.STRAIGHT] * ns)
@@ -575,7 +586,7 @@ def _try_add_spur(
         spur_configs = [[RailType.CURVE_R]] if spare_curve >= 1 else []
 
     for idx in cand:
-        p = main.placed[idx]
+        p = placed[idx]
         rot = math.radians(p["rotation"])
         c, s = math.cos(rot), math.sin(rot)
         bx = p["origin_x"] + branch.x * c - branch.y * s
@@ -589,21 +600,20 @@ def _try_add_spur(
                 spur.add(rt)
 
             # 領域内チェック
-            allx = [pt[0] for pt in main.points + spur.points]
-            ally = [pt[1] for pt in main.points + spur.points]
+            allx = [pt[0] for pt in points + spur.points]
+            ally = [pt[1] for pt in points + spur.points]
             if max(max(allx) - min(allx), max(ally) - min(ally)) > MAX_BBOX_MM:
                 continue
 
-            # 側線 vs 本線 の重なりチェック（分岐直後の1セルだけ許容）
+            # 側線 vs 本線・既存の側線 の重なりチェック（分岐直後の数セルだけ許容）
             ok = True
-            skip = 2  # 分岐付近の最初の数サンプルは本線と近接するので許容
+            skip = 2
             spur_cells: Dict[Tuple[int, int], int] = {}
             for k, (sidx, x, y) in enumerate(spur.samples):
                 cell = (int(x // GRID_MM), int(y // GRID_MM))
-                if k >= skip and cell in main_cells:
+                if k >= skip and cell in occupied:
                     ok = False
                     break
-                # 側線内の自己交差
                 if cell in spur_cells and abs(spur_cells[cell] - sidx) > 1:
                     ok = False
                     break
@@ -611,29 +621,78 @@ def _try_add_spur(
             if not ok:
                 continue
 
-            # 成立: 本線の直線をポイントに置換し、側線ピースを spur フラグ付きで追加
-            new_placed = [dict(pp) for pp in main.placed]
-            new_placed[idx]["rail_type"] = switch_type.value
-            for sp in spur.placed:
+            # 成立: 本線ピースをポイントに置換し、側線ピースを spur フラグ付きで追加
+            new_placed = list(placed)
+            new_placed[idx] = {**placed[idx], "rail_type": switch_type.value}
+            new_occupied = dict(occupied)
+            for k, sp in enumerate(spur.placed):
                 sp2 = dict(sp)
                 sp2["spur"] = True
+                if k == 0:
+                    # 側線チェーンの先頭ピースだけに接続元(ポイント)のインデックスを
+                    # 埋め込む。組み立てガイドが「本線の直前ピース」ではなく
+                    # 正しい分岐元を案内できるようにするため。
+                    sp2["attach_index"] = idx
                 new_placed.append(sp2)
+            for sidx, x, y in spur.samples:
+                new_occupied[(int(x // GRID_MM), int(y // GRID_MM))] = sidx
             open_end = {"x": spur.x, "y": spur.y, "heading": spur.h % 360.0}
-            new_points = list(main.points) + spur.points
-            return new_placed, new_points, open_end
+            new_points = points + spur.points
 
-    return None
+            used[switch_type] = used.get(switch_type, 0) + 1
+            for rt in pieces:  # 側線の尾部が消費した直線・カーブ在庫を反映
+                used[rt] = used.get(rt, 0) + 1
+            replaced.add(idx)
+            return new_placed, new_points, new_occupied, open_end
+
+    # この種別では置き場所が見つからなかった → 使い切り扱いにして次の種別へ
+    used[switch_type] = inv.get(switch_type, 0)
+    return _place_one_spur(placed, points, occupied, inv, used, replaced, rng)
 
 
-def _used_counts(placed: List[dict]) -> Dict[RailType, int]:
-    counts: Dict[RailType, int] = {}
-    for p in placed:
+def _try_add_spurs(
+    main: _Walker,
+    inv: Dict[RailType, int],
+    rng: random.Random,
+) -> Optional[Tuple[List[dict], List[Tuple[float, float]], List[dict]]]:
+    """
+    本線ループに、在庫にあるポイントレール(switch_left/right・auto_turnout・
+    switch_y)の数だけ行き止まりの側線を複数本追加する。
+
+    以前は最初に見つかったポイント1本だけを側線化していたため、複数個
+    入力しても1本しか組み込まれなかった。在庫にある種類・本数を使い切る
+    まで繰り返し試行する。
+
+    Returns: (統合placed, 統合points, 側線開放端dictのリスト) / 1本も
+             成立しなければ None
+    """
+    placed = [dict(p) for p in main.placed]
+    points = list(main.points)
+    occupied = _grid_cells(main.samples)
+    replaced: set = set()
+    open_ends: List[dict] = []
+
+    # 本線が既に消費した直線・カーブ本数を起点に「残り在庫」を追跡する
+    # （switch_typeキーは未登場のため0からで良く、STRAIGHT/CURVE_Rだけ実測値で初期化する）
+    used: Dict[RailType, int] = {}
+    for p in main.placed:
         try:
             rt = RailType(p["rail_type"])
         except ValueError:
             continue
-        counts[rt] = counts.get(rt, 0) + 1
-    return counts
+        used[rt] = used.get(rt, 0) + 1
+
+    budget = sum(inv.get(st, 0) for st in _ALL_SPUR_TYPES)
+    for _ in range(min(budget, 8)):  # 安全上限
+        result = _place_one_spur(placed, points, occupied, inv, used, replaced, rng)
+        if result is None:
+            break
+        placed, points, occupied, open_end = result
+        open_ends.append(open_end)
+
+    if not open_ends:
+        return None
+    return placed, points, open_ends
 
 
 def _build_open_preview(inv: Dict[RailType, int]) -> List[dict]:
@@ -744,16 +803,13 @@ def _generate_ex(
         placed = _build_open_preview(inv)
         return placed, False, {RailType.CURVE_R.value: 1}, None
 
-    # ---- 側線（スパー）: ポイントレールがあれば本線に行き止まり側線を付ける ----
+    # ---- 側線（スパー）: ポイントレールがあれば本線に行き止まり側線を複数付ける ----
     result_placed = best_walker.placed
     result_points = best_walker.points
-    if theme != "figure8" and (
-            inv.get(RailType.SWITCH_LEFT, 0) > 0
-            or inv.get(RailType.SWITCH_RIGHT, 0) > 0):
-        used = _used_counts(best_walker.placed)
-        spur = _try_add_spur(best_walker, used, inv, rng)
-        if spur is not None:
-            result_placed, result_points, _open_end = spur
+    if theme != "figure8" and any(inv.get(st, 0) > 0 for st in _ALL_SPUR_TYPES):
+        spurs = _try_add_spurs(best_walker, inv, rng)
+        if spurs is not None:
+            result_placed, result_points, _open_ends = spurs
 
     placed = _rotate_and_center(result_placed, result_points, theta)
     return placed, True, {}, best_walker

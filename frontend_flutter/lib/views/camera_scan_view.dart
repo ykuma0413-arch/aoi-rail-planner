@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:typed_data';
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:camera/camera.dart';
@@ -31,6 +32,7 @@ class _CameraScanViewState extends ConsumerState<CameraScanView> {
   bool _isProcessing = false;
   bool _showOnboarding = false;
   bool _cameraReady = false;
+  bool _scanAvailable = false;  // 実検出モデルが使える状態かどうか（プレースホルダーは false）
   String? _errorMessage;
   String? _modelStatus;  // モデル読込状況をUIに表示
 
@@ -74,7 +76,9 @@ class _CameraScanViewState extends ConsumerState<CameraScanView> {
     try {
       cameras = await availableCameras();
     } catch (e) {
-      setState(() => _errorMessage = 'カメラ列挙に失敗: $e');
+      debugPrint('[camera_scan] availableCameras failed: $e');
+      setState(() => _errorMessage =
+          'カメラを認識できませんでした。\n端末を再起動してから、もう一度お試しください。');
       return;
     }
 
@@ -102,7 +106,9 @@ class _CameraScanViewState extends ConsumerState<CameraScanView> {
       if (!mounted) return;
       setState(() => _cameraReady = true);
     } catch (e) {
-      setState(() => _errorMessage = 'カメラの初期化に失敗: $e');
+      debugPrint('[camera_scan] CameraController.initialize failed: $e');
+      setState(() => _errorMessage =
+          'カメラをうまく起動できませんでした。\n他のアプリでカメラを使用中の場合は閉じてから、もう一度お試しください。');
       return;
     }
 
@@ -116,11 +122,31 @@ class _CameraScanViewState extends ConsumerState<CameraScanView> {
       // assets/ プレフィックス問題回避: rootBundle で直接バイトロード
       final data = await rootBundle.load(_modelAssetKey);
       final bytes = data.buffer.asUint8List();
-      _interpreter = Interpreter.fromBuffer(bytes);
-      if (mounted) setState(() => _modelStatus = 'モデル準備OK');
+      final interpreter = Interpreter.fromBuffer(bytes);
+
+      // プレースホルダーモデル判定: 実検出モデルは YOLO形式の3階テンソル
+      // ([1, N, 4+nc] 等)を出力する。現状同梱されているのは疎通確認用の
+      // モック（出力 [1, 14] の固定ゼロ）なので、形状で見分ける。
+      final outShape = interpreter.getOutputTensor(0).shape;
+      final isRealModel = outShape.length == 3;
+
+      _interpreter = interpreter;
+      if (mounted) {
+        setState(() {
+          _scanAvailable = isRealModel;
+          _modelStatus = isRealModel
+              ? 'モデル準備OK'
+              : 'AI検出は準備中（手動で入力してね）';
+        });
+      }
     } catch (e) {
       // モデル失敗してもカメラプレビューは継続
-      if (mounted) setState(() => _modelStatus = 'モデル未ロード（スキャン無効）');
+      if (mounted) {
+        setState(() {
+          _scanAvailable = false;
+          _modelStatus = 'モデル未ロード（スキャン無効）';
+        });
+      }
     }
   }
 
@@ -138,12 +164,14 @@ class _CameraScanViewState extends ConsumerState<CameraScanView> {
         await File(xfile.path).delete();
       } catch (_) {}
 
-      if (_interpreter == null) {
-        // モデル未ロード時はスキャン結果なしで戻る
+      if (_interpreter == null || !_scanAvailable) {
+        // AI検出が使えない状態（未ロード or プレースホルダーモデル）はスキャン結果なしで戻る
         imgBytes = null;
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('モデル未ロードのため、スキャン結果は空です')),
+            const SnackBar(
+              content: Text('AI検出は準備中です。お手数ですが手動でパーツを入力してください'),
+            ),
           );
           Navigator.of(context).pop();
         }
@@ -195,8 +223,9 @@ class _CameraScanViewState extends ConsumerState<CameraScanView> {
         Navigator.of(context).pop();
       }
     } catch (e) {
+      debugPrint('[camera_scan] capture/inference failed: $e');
       setState(() {
-        _errorMessage = 'スキャンに失敗: $e';
+        _errorMessage = '写真の処理に失敗しました。\nもう一度スキャンしてみてください。';
       });
     } finally {
       if (mounted) setState(() => _isProcessing = false);
@@ -225,12 +254,14 @@ class _CameraScanViewState extends ConsumerState<CameraScanView> {
     );
   }
 
-  // dataset.yaml のクラス順と完全一致させること
+  // dataset.yaml のクラス順と完全一致させること（RailType全19種）
   static const _classNames = [
     'straight', 'straight_half', 'curve_r', 'curve_r_large',
     'incline_start', 'incline_middle', 'incline_end', 'crossing',
     'switch_left', 'switch_right', 'bridge_pier_standard',
     'bridge_pier_block', 'flexible', 'straight_double',
+    'straight_quarter', 'stop_rail', 'switch_y', 'auto_turnout',
+    'cross_point',
   ];
   static const _confThreshold = 0.35;
   static const _iouThreshold = 0.50;
@@ -424,19 +455,38 @@ class _CameraScanViewState extends ConsumerState<CameraScanView> {
               padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 16),
               child: Column(
                 children: [
-                  const Text(
-                    'パーツを枠内に広げて置いてください',
-                    style: TextStyle(color: Colors.white),
-                    textAlign: TextAlign.center,
-                  ),
+                  if (!_scanAvailable) ...[
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          vertical: 8, horizontal: 12),
+                      decoration: BoxDecoration(
+                        color: Colors.orange.withOpacity(0.85),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: const Text(
+                        '⚠️ AI検出はただいま準備中です。下の「手動で入力する」からパーツを追加してね',
+                        style: TextStyle(color: Colors.white, fontSize: 13),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                  ] else
+                    const Text(
+                      'パーツを枠内に広げて置いてください',
+                      style: TextStyle(color: Colors.white),
+                      textAlign: TextAlign.center,
+                    ),
                   const SizedBox(height: 16),
                   ElevatedButton.icon(
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFF0072BC),
+                      disabledBackgroundColor: Colors.grey,
                       padding: const EdgeInsets.symmetric(
                           vertical: 14, horizontal: 32),
                     ),
-                    onPressed: _isProcessing ? null : _captureAndInfer,
+                    onPressed: (_isProcessing || !_scanAvailable)
+                        ? null
+                        : _captureAndInfer,
                     icon: _isProcessing
                         ? const SizedBox(
                             width: 20,
@@ -446,12 +496,26 @@ class _CameraScanViewState extends ConsumerState<CameraScanView> {
                               color: Colors.white,
                             ),
                           )
-                        : const Icon(Icons.camera, color: Colors.white),
+                        : Icon(
+                            _scanAvailable ? Icons.camera : Icons.camera_alt_outlined,
+                            color: Colors.white),
                     label: Text(
-                      _isProcessing ? '解析中…' : 'スキャン',
+                      _isProcessing
+                          ? '解析中…'
+                          : (_scanAvailable ? 'スキャン' : 'AI検出 準備中'),
                       style: const TextStyle(color: Colors.white, fontSize: 16),
                     ),
                   ),
+                  if (!_scanAvailable) ...[
+                    const SizedBox(height: 8),
+                    TextButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      child: const Text(
+                        '手動で入力する',
+                        style: TextStyle(color: Colors.white70),
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),

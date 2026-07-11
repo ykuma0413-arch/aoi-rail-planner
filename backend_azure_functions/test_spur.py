@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from layout_generator.algorithm import search_layout
 from test_complex_layout import piece_endpoints, PIERS, JOINT_TOL
 
-SWITCHES = {"switch_left", "switch_right"}
+SWITCHES = {"switch_left", "switch_right", "auto_turnout", "switch_y"}
 
 
 def main_loop_pieces(placed):
@@ -95,14 +95,25 @@ def check_spur_deadend(placed):
     return dead_ends, f"側線ピース{len(sp)} 接続端{attach_ends} 行き止まり{dead_ends}"
 
 
+def _switch_pieces(placed):
+    return [p for p in placed if p["rail_type"] in SWITCHES]
+
+
 async def main():
     print("=" * 68)
-    print("側線（スパー）検証テスト")
+    print("側線（スパー）検証テスト（複数ポイント対応）")
     print("=" * 68)
-    inv = {"curve_r": 24, "straight": 10, "switch_left": 1, "switch_right": 1}
+    # switch_left/right/auto_turnout/switch_y を複数投入し、複数本の
+    # 側線が組み込まれることを検証する（以前は1本しか組み込まれなかった）。
+    inv = {
+        "curve_r": 24, "straight": 16,
+        "switch_left": 2, "switch_right": 2,
+        "auto_turnout": 1, "switch_y": 1,
+    }
 
     runs = 30
     with_spur = 0
+    multi_spur = 0
     main_ok = 0
     deadend_ok = 0
     fails = []
@@ -117,24 +128,29 @@ async def main():
             continue
         main_ok += 1
         sp = spur_pieces(placed)
+        n_switches = len(_switch_pieces(placed))
         if sp:
             with_spur += 1
-            n_open, _ = check_spur_deadend(placed)
-            # 行き止まり = 開放端が1つ（本線接続側は本線ピースと繋がるので除く）
-            if n_open == 1:
+            if n_switches >= 2:
+                multi_spur += 1
+            n_open, msg = check_spur_deadend(placed)
+            # 行き止まり数・接続数はどちらも「側線の本数」と一致するはず
+            # （各側線が1つの分岐から1つの行き止まりへ伸びるチェーンのため）。
+            if n_open == n_switches:
                 deadend_ok += 1
             else:
-                fails.append((i, f"側線の開放端が{n_open}個 (期待1)"))
+                fails.append((i, f"{msg} (ポイント数{n_switches}と不一致)"))
 
     print(f"本線が閉じている: {main_ok}/{runs}")
     print(f"側線が付いた: {with_spur}/{runs}")
-    print(f"側線が正しい行き止まり(開放端1): {deadend_ok}/{with_spur if with_spur else 1}")
+    print(f"複数ポイントが同時に組み込まれた: {multi_spur}/{runs}")
+    print(f"側線が正しい行き止まり(本数と一致): {deadend_ok}/{with_spur if with_spur else 1}")
     if fails:
         print(f"\n失敗 {len(fails)}件:")
         for i, msg in fails[:8]:
             print(f"  run{i}: {msg}")
-    ok = (main_ok == runs) and (with_spur >= 1) and (deadend_ok == with_spur)
-    print("\n判定:", "🎉 側線OK" if ok else "❌ 要修正")
+    ok = (main_ok == runs) and (with_spur >= 1) and (multi_spur >= 1) and (deadend_ok == with_spur)
+    print("\n判定:", "🎉 側線OK（複数組み込み確認）" if ok else "❌ 要修正")
     sys.exit(0 if ok else 1)
 
 
