@@ -35,7 +35,7 @@ class _InventoryScreenState extends ConsumerState<InventoryScreen> {
     final inventory = ref.watch(inventoryProvider);
     final total = ref.watch(totalCountProvider);
     final layoutState = ref.watch(layoutProvider);
-    final configAsync = ref.watch(configProvider);
+    ref.watch(configProvider); // 起動時にウォームアップpingを走らせるため購読だけしておく
 
     return Scaffold(
       backgroundColor: const Color(0xFFF7FAFD),

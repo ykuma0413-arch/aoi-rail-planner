@@ -355,7 +355,6 @@ class _RailIconPainter extends CustomPainter {
 
   void _crossing(Canvas c, Size s) {
     final w = s.width, h = s.height;
-    final mid = Offset(w / 2, h / 2);
     final a1 = Offset(7, h / 2);
     final b1 = Offset(w - 7, h / 2);
     final a2 = Offset(w / 2, 7);
