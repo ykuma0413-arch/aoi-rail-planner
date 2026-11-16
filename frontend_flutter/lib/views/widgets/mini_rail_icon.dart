@@ -277,6 +277,10 @@ class _RailIconPainter extends CustomPainter {
         _switch(canvas, size, branchUp: true);
       case RailType.switchY:
         _switchY(canvas, size);
+      case RailType.figure8Point:
+        _figure8Point(canvas, size);
+      case RailType.singleDoublePoint:
+        _singleDoublePoint(canvas, size);
       case RailType.inclineStart:
         _incline(canvas, size, ascending: true, marker: true);
       case RailType.inclineMiddle:
@@ -333,6 +337,49 @@ class _RailIconPainter extends CustomPainter {
     final dnA = math.atan2(down.dy - fork.dy, down.dx - fork.dx);
     paintMaleJoint(c, up, color, outwardAngle: upA, size: 2.6);
     paintMaleJoint(c, down, color, outwardAngle: dnA, size: 2.6);
+  }
+
+  /// 8の字ポイント: Y字形の分岐 + 「8」マークで識別
+  void _figure8Point(Canvas c, Size s) {
+    final w = s.width, h = s.height;
+    final mid = h / 2;
+    final a = Offset(7, mid);
+    final fork = Offset(w * 0.40, mid);
+    final up = Offset(w - 8, mid - h * 0.30);
+    final down = Offset(w - 8, mid + h * 0.30);
+    _bandLine(c, fork, up, _bw * 0.8, color);
+    _bandLine(c, fork, down, _bw * 0.8, color);
+    _bandLine(c, a, fork, _bw * 0.9, color);
+    // 「8」マーク（上下2つの輪）
+    final ring = Paint()
+      ..color = grooveColorOf(color)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.4;
+    c.drawCircle(Offset(fork.dx - 5, mid - 2.3), 2.1, ring);
+    c.drawCircle(Offset(fork.dx - 5, mid + 2.3), 2.1, ring);
+    paintFemaleJoint(c, a, color, outwardAngle: math.pi, size: _js);
+    final upA = math.atan2(up.dy - fork.dy, up.dx - fork.dx);
+    final dnA = math.atan2(down.dy - fork.dy, down.dx - fork.dx);
+    paintMaleJoint(c, up, color, outwardAngle: upA, size: 2.6);
+    paintMaleJoint(c, down, color, outwardAngle: dnA, size: 2.6);
+  }
+
+  /// 単線・複線ポイント: 直線主軸 + S字で平行な複線側へ分岐
+  void _singleDoublePoint(Canvas c, Size s) {
+    final w = s.width, h = s.height;
+    final mid = h / 2 + h * 0.15;
+    final upY = mid - h * 0.32;
+    final a = Offset(7, mid);
+    final b = Offset(w - 7, mid);
+    final forkX = w * 0.26;
+    final parStart = Offset(w * 0.62, upY);
+    final up = Offset(w - 8, upY);
+    _bandLine(c, Offset(forkX, mid), parStart, _bw * 0.75, color); // S字の斜め部
+    _bandLine(c, parStart, up, _bw * 0.75, color); // 平行部（複線側）
+    _bandLine(c, a, b, _bw * 0.9, color); // 主軸
+    paintFemaleJoint(c, a, color, outwardAngle: math.pi, size: _js);
+    paintMaleJoint(c, b, color, outwardAngle: 0, size: _js);
+    paintMaleJoint(c, up, color, outwardAngle: 0, size: 2.6);
   }
 
   void _curve(Canvas c, Size s, {required double radiusRatio}) {

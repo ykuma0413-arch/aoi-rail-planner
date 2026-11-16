@@ -35,6 +35,10 @@ const Map<RailType, String> _partKw = {
   RailType.autoTurnout:
       '%E8%87%AA%E5%8B%95%E3%83%9D%E3%82%A4%E3%83%B3%E3%83%88%E3%83%AC%E3%83%BC%E3%83%AB', // 自動ポイントレール
   RailType.crossPoint: '%E4%BA%A4%E5%B7%AE%E3%83%9D%E3%82%A4%E3%83%B3%E3%83%88',  // 交差ポイント
+  RailType.figure8Point:
+      '8%E3%81%AE%E5%AD%97%E3%83%9D%E3%82%A4%E3%83%B3%E3%83%88',                 // 8の字ポイント
+  RailType.singleDoublePoint:
+      '%E5%8D%98%E7%B7%9A%E3%83%BB%E8%A4%87%E7%B7%9A%E3%83%9D%E3%82%A4%E3%83%B3%E3%83%88', // 単線・複線ポイント
   RailType.bridgePierStandard: '%E6%A9%8B%E8%84%9A',                             // 橋脚
   RailType.bridgePierBlock: '%E3%83%96%E3%83%AD%E3%83%83%E3%82%AF%E6%A9%8B%E8%84%9A', // ブロック橋脚
   RailType.flexible: '%E3%81%BE%E3%81%8C%E3%83%AC%E3%83%BC%E3%83%AB',            // まがレール

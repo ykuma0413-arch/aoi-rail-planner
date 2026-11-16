@@ -17,7 +17,8 @@ sys.path.insert(0, os.path.dirname(__file__))
 from layout_generator.algorithm import search_layout
 from test_complex_layout import piece_endpoints, PIERS, JOINT_TOL
 
-SWITCHES = {"switch_left", "switch_right", "auto_turnout", "switch_y"}
+SWITCHES = {"switch_left", "switch_right", "auto_turnout", "switch_y",
+            "figure8_point", "single_double_point"}
 
 
 def main_loop_pieces(placed):
@@ -103,12 +104,13 @@ async def main():
     print("=" * 68)
     print("側線（スパー）検証テスト（複数ポイント対応）")
     print("=" * 68)
-    # switch_left/right/auto_turnout/switch_y を複数投入し、複数本の
-    # 側線が組み込まれることを検証する（以前は1本しか組み込まれなかった）。
+    # 全ポイント種別（単線・複線ポイント / 8の字ポイント含む）を投入し、
+    # 複数本の側線が組み込まれることを検証する。
     inv = {
         "curve_r": 24, "straight": 16,
-        "switch_left": 2, "switch_right": 2,
+        "switch_left": 1, "switch_right": 1,
         "auto_turnout": 1, "switch_y": 1,
+        "figure8_point": 1, "single_double_point": 1,
     }
 
     runs = 30
@@ -116,6 +118,7 @@ async def main():
     multi_spur = 0
     main_ok = 0
     deadend_ok = 0
+    used_types = set()
     fails = []
     for i in range(runs):
         placed, closed, _ = await search_layout(dict(inv), "standard")
@@ -129,6 +132,7 @@ async def main():
         main_ok += 1
         sp = spur_pieces(placed)
         n_switches = len(_switch_pieces(placed))
+        used_types.update(p["rail_type"] for p in _switch_pieces(placed))
         if sp:
             with_spur += 1
             if n_switches >= 2:
@@ -141,15 +145,21 @@ async def main():
             else:
                 fails.append((i, f"{msg} (ポイント数{n_switches}と不一致)"))
 
+    # 新種別（単線・複線ポイント / 8の字ポイント）も30回のどこかで実際に
+    # 組み込まれること（在庫に入れたのに一度も使われないのは退行）。
+    new_types_ok = {"single_double_point", "figure8_point"} <= used_types
+
     print(f"本線が閉じている: {main_ok}/{runs}")
     print(f"側線が付いた: {with_spur}/{runs}")
     print(f"複数ポイントが同時に組み込まれた: {multi_spur}/{runs}")
     print(f"側線が正しい行き止まり(本数と一致): {deadend_ok}/{with_spur if with_spur else 1}")
+    print(f"使われたポイント種別: {sorted(used_types)}")
     if fails:
         print(f"\n失敗 {len(fails)}件:")
         for i, msg in fails[:8]:
             print(f"  run{i}: {msg}")
-    ok = (main_ok == runs) and (with_spur >= 1) and (multi_spur >= 1) and (deadend_ok == with_spur)
+    ok = ((main_ok == runs) and (with_spur >= 1) and (multi_spur >= 1)
+          and (deadend_ok == with_spur) and new_types_ok)
     print("\n判定:", "🎉 側線OK（複数組み込み確認）" if ok else "❌ 要修正")
     sys.exit(0 if ok else 1)
 

@@ -30,6 +30,8 @@ class RailType(Enum):
     SWITCH_Y = "switch_y"                   # Y字ポイントレール
     AUTO_TURNOUT = "auto_turnout"           # 自動ターンアウトレール
     CROSS_POINT = "cross_point"             # 交差ポイントレール
+    FIGURE8_POINT = "figure8_point"         # 8の字ポイントレール
+    SINGLE_DOUBLE_POINT = "single_double_point"  # 単線・複線ポイントレール
 
 
 class Polarity(Enum):
@@ -87,6 +89,12 @@ def _curve_exit(radius: float, angle_deg: float) -> tuple[float, float]:
 
 _cx_r, _cy_r = _curve_exit(_R, _DA)
 _cx_rl, _cy_rl = _curve_exit(_RL, _DA)
+
+# 単線・複線ポイントのS字分岐（45°+逆45°, R103）。
+# 出口は主軸と平行で、横オフセット 2R(1-cos45°) ≈ 60.3mm = 複線間隔。
+_DBL_DA = 45.0
+_sx_dbl = 2.0 * _R * math.sin(math.radians(_DBL_DA))
+_sy_dbl = 2.0 * _R * (1.0 - math.cos(math.radians(_DBL_DA)))
 
 RAIL_GEOMETRY_DB: Dict[RailType, RailGeometry] = {
     RailType.STRAIGHT: RailGeometry(
@@ -253,6 +261,26 @@ RAIL_GEOMETRY_DB: Dict[RailType, RailGeometry] = {
         ],
         excluded_from_auto=True,  # ポイント切替系: 探索空間爆発のため除外
         display_name="交差ポイントレール",
+    ),
+    RailType.FIGURE8_POINT: RailGeometry(
+        rail_type=RailType.FIGURE8_POINT,
+        joints=[
+            JointPoint(0.0, 0.0, 180.0, Polarity.FEMALE),
+            JointPoint(_cx_r, _cy_r, _DA, Polarity.MALE),
+            JointPoint(_cx_r, -_cy_r, -_DA % 360.0, Polarity.MALE),
+        ],
+        excluded_from_auto=True,  # 分岐系: 探索空間爆発のため除外
+        display_name="8の字ポイントレール",
+    ),
+    RailType.SINGLE_DOUBLE_POINT: RailGeometry(
+        rail_type=RailType.SINGLE_DOUBLE_POINT,
+        joints=[
+            JointPoint(0.0, 0.0, 180.0, Polarity.FEMALE),
+            JointPoint(_S, 0.0, 0.0, Polarity.MALE),
+            JointPoint(_sx_dbl, _sy_dbl, 0.0, Polarity.MALE),  # S字分岐→平行複線
+        ],
+        excluded_from_auto=True,  # 分岐系: 探索空間爆発のため除外
+        display_name="単線・複線ポイントレール",
     ),
 }
 

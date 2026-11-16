@@ -528,9 +528,11 @@ def _grid_cells(samples: List[Tuple[int, float, float]]) -> Dict[Tuple[int, int]
 
 # 直線(106mm)を置換するタイプ: 主軸=joints[1]が直線と同一、分岐=joints[2]
 _STRAIGHT_SWITCH_TYPES = (RailType.SWITCH_LEFT, RailType.SWITCH_RIGHT,
-                          RailType.AUTO_TURNOUT)
+                          RailType.AUTO_TURNOUT, RailType.SINGLE_DOUBLE_POINT)
+# カーブ(103mm/22.5°)を置換するタイプ: 主軸=joints[1]が非反転カーブ出口と同一
+_CURVE_SWITCH_TYPES = (RailType.SWITCH_Y, RailType.FIGURE8_POINT)
 # 全ポイント種別（側線化の優先順）
-_ALL_SPUR_TYPES = (*_STRAIGHT_SWITCH_TYPES, RailType.SWITCH_Y)
+_ALL_SPUR_TYPES = (*_STRAIGHT_SWITCH_TYPES, *_CURVE_SWITCH_TYPES)
 
 
 def _place_one_spur(
@@ -556,10 +558,11 @@ def _place_one_spur(
     if switch_type is None:
         return None
 
-    # switch_y は主軸(joints[1])が標準カーブ(非反転)の出口と同一なのでカーブを置換、
-    # それ以外は主軸が直線106mmと同一なので直線を置換する。
-    is_y = switch_type == RailType.SWITCH_Y
-    target_type = RailType.CURVE_R.value if is_y else RailType.STRAIGHT.value
+    # カーブ主軸タイプ(switch_y / figure8_point)は主軸(joints[1])が標準カーブ
+    # (非反転)の出口と同一なのでカーブを置換、それ以外は直線106mmを置換する。
+    is_curve_axis = switch_type in _CURVE_SWITCH_TYPES
+    target_type = (RailType.CURVE_R.value if is_curve_axis
+                   else RailType.STRAIGHT.value)
 
     spare_straight = inv.get(RailType.STRAIGHT, 0) - used.get(RailType.STRAIGHT, 0)
     spare_curve = inv.get(RailType.CURVE_R, 0) - used.get(RailType.CURVE_R, 0)
@@ -573,7 +576,7 @@ def _place_one_spur(
             if i not in replaced
             and p["rail_type"] == target_type
             and not p.get("spur")
-            and (not is_y or not p.get("flipped", False))]
+            and (not is_curve_axis or not p.get("flipped", False))]
     rng.shuffle(cand)
 
     # 側線構成の候補（短い順に試す。分岐で既に曲がっているので直線主体）

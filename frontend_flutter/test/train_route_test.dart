@@ -89,6 +89,18 @@ class _Builder {
     y = sw.originY + lx * math.sin(rad) + ly * math.cos(rad);
     h = (sw.rotation + sign * 22.5) % 360.0;
   }
+
+  /// 単線・複線ポイントのS字分岐出口（平行複線、横オフセット 2R(1-cos45°)）へ
+  /// カーソルを移す。出口の向きはポイント主軸と同じ。
+  void jumpToParallelBranchOf(PlacedRail sw) {
+    final rad = sw.rotation * math.pi / 180.0;
+    const s45 = math.pi / 4;
+    final lx = 2 * _r * math.sin(s45);
+    final ly = 2 * _r * (1 - math.cos(s45));
+    x = sw.originX + lx * math.cos(rad) - ly * math.sin(rad);
+    y = sw.originY + lx * math.sin(rad) + ly * math.cos(rad);
+    h = sw.rotation;
+  }
 }
 
 /// 直線2本 + カーブ16本のオーバル。先頭の直線を [firstStraight] で差し替え可。
@@ -135,6 +147,48 @@ void main() {
       expect(route.excursions.length, 1);
       expect(route.excursions[0].length, closeTo(_curveLen + 212.0, 1.0),
           reason: '側線長 = 分岐弧 + 直線2本 のはず');
+    });
+
+    test('single_double_point: S字分岐で平行な複線側線が行程になる', () {
+      final b = _oval(firstStraight: 'single_double_point');
+      b.jumpToParallelBranchOf(b.rails[0]);
+      b.straight(spur: true);
+
+      final route = TrainRoute.fromRails(b.rails);
+      expect(route.closureGapMm, lessThan(1.0));
+      expect(route.mainLength, closeTo(ovalMainLen, 1.0),
+          reason: 'ポイント主軸(106mm直線)が本線長に正しく寄与していない');
+      expect(route.excursions.length, 1);
+      // 側線長 = S字(45°+45°, R103) + 直線1本
+      final sLen = 2 * (_r * math.pi / 4);
+      expect(route.excursions[0].length, closeTo(sLen + 106.0, 1.0));
+      // S字終端は主軸と平行（heading 0）で、複線間隔 2R(1-cos45°) ≈ 60.3mm
+      final endOfS = route.excursions[0].poseAt(sLen);
+      expect(math.sin(endOfS.heading).abs(), lessThan(1e-6),
+          reason: 'S字分岐の出口が主軸と平行でない');
+      expect(math.cos(endOfS.heading), closeTo(1.0, 1e-6));
+      expect(endOfS.position.dy - 900.0, closeTo(60.34, 0.3),
+          reason: '複線間隔オフセットが仕様と不一致');
+    });
+
+    test('figure8_point はY字同様カーブ主軸として本線に組み込まれる', () {
+      final b = _Builder(900, 700);
+      for (var i = 0; i < 5; i++) {
+        b.curve();
+      }
+      final sw = b._emit('figure8_point');
+      b._advanceCurve(false);
+      for (var i = 0; i < 10; i++) {
+        b.curve();
+      }
+      b.jumpToBranchOf(sw, branchFlipped: true);
+      b.straight(spur: true);
+
+      final route = TrainRoute.fromRails(b.rails);
+      expect(route.closureGapMm, lessThan(1.0),
+          reason: 'figure8_point を直線扱いすると本線が閉じない');
+      expect(route.mainLength, closeTo(16 * _curveLen, 1.0));
+      expect(route.excursions.length, 1);
     });
 
     test('switch_y 主軸は曲線として本線に組み込まれる（直線扱いだと閉路が壊れる）', () {

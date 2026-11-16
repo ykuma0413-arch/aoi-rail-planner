@@ -87,11 +87,12 @@ class TrackSeg {
   }
 }
 
-/// 原点 [origin]・向き [rotRad] のレールから出る22.5°分岐弧を作る。
+/// 原点 [origin]・向き [rotRad] のレールから出る分岐弧（既定22.5°）を作る。
 /// flipped=false は左旋回（非反転カーブと同形）、true は右旋回。
-TrackSeg _branchArc(Offset origin, double rotRad, bool flipped) {
+TrackSeg _branchArc(Offset origin, double rotRad, bool flipped,
+    {double spanRad = kCurveSpanRad}) {
   final r = kCurveRadiusMm;
-  final len = r * kCurveSpanRad;
+  final len = r * spanRad;
   if (!flipped) {
     final center = origin +
         Offset(r * math.cos(rotRad + math.pi / 2),
@@ -252,17 +253,19 @@ class TrainRoute {
     for (var i = 0; i < rails.length; i++) {
       final rail = rails[i];
       if (rail.spur) continue;
-      final branchFlipped = _branchFlippedOf(rail);
-      if (branchFlipped == null) continue; // ポイントではない
+      final branchSegs = _branchSegsOf(rail);
+      if (branchSegs == null) continue; // ポイントではない
       // 対向方向（分岐弧の始端接線 = 本線の進行方向）で通過するポイント
       // だけが進路選択できる。背向通過のポイントは素通りする。
       if (traversedReversed[i] != false) continue;
 
-      final rot = rail.rotation * math.pi / 180.0;
-      final origin = Offset(rail.originX, rail.originY);
-      final exSegs = <TrackSeg>[_branchArc(origin, rot, branchFlipped)];
-      var exLen = exSegs.first.length;
-      var cur = exSegs.first.posAt(exSegs.first.length);
+      final nBranchSegs = branchSegs.length;
+      final exSegs = <TrackSeg>[...branchSegs];
+      var exLen = 0.0;
+      for (final s in exSegs) {
+        exLen += s.length;
+      }
+      var cur = exSegs.last.posAt(exSegs.last.length);
 
       // 側線ピースを分岐弧の先から最近傍で辿る（他の側線のピースは
       // 物理的に離れているため許容距離内に現れない）
@@ -296,7 +299,8 @@ class TrainRoute {
       }
 
       final stopAt = exLen - kDeadEndMarginMm;
-      if (exSegs.length < 2 || stopAt < 20.0) continue; // 側線が短すぎる
+      // 分岐弧しかない（側線ピースが繋がらなかった）か、短すぎる側線は対象外
+      if (exSegs.length <= nBranchSegs || stopAt < 20.0) continue;
       excursions.add(SpurExcursion(
         mainOffset: startDist[i] ?? 0.0,
         segs: exSegs,
@@ -318,10 +322,11 @@ class TrainRoute {
     final origin = Offset(rail.originX, rail.originY);
     final rot = rail.rotation * math.pi / 180.0;
 
-    // 曲線主軸: カーブ2種 + Y字ポイント（主軸自体が22.5°カーブ）
+    // 曲線主軸: カーブ2種 + Y字/8の字ポイント（主軸自体が22.5°カーブ）
     if (rt == RailType.curveR ||
         rt == RailType.curveRLarge ||
-        rt == RailType.switchY) {
+        rt == RailType.switchY ||
+        rt == RailType.figure8Point) {
       final r =
           rt == RailType.curveRLarge ? kCurveRadiusLargeMm : kCurveRadiusMm;
       final len = r * kCurveSpanRad;
@@ -352,17 +357,28 @@ class TrainRoute {
         origin, Offset(math.cos(rot), math.sin(rot)), mm);
   }
 
-  /// ポイントの分岐弧の向き。非ポイントは null。
-  /// switch_y は主軸が非反転カーブなら分岐は反転側（またはその逆）。
-  static bool? _branchFlippedOf(PlacedRail rail) {
+  /// ポイントの分岐セグメント列（進入方向）。非ポイントは null。
+  /// switch_y / figure8_point は主軸が非反転カーブなら分岐は反転側
+  /// （またはその逆）。single_double_point は45°+逆45°のS字で
+  /// 平行な複線側線（横オフセット 2R(1-cos45°) ≈ 60.3mm）へ抜ける。
+  static List<TrackSeg>? _branchSegsOf(PlacedRail rail) {
+    final origin = Offset(rail.originX, rail.originY);
+    final rot = rail.rotation * math.pi / 180.0;
     switch (RailType.fromApiValue(rail.railType)) {
       case RailType.switchLeft:
       case RailType.autoTurnout:
-        return false;
+        return [_branchArc(origin, rot, false)];
       case RailType.switchRight:
-        return true;
+        return [_branchArc(origin, rot, true)];
       case RailType.switchY:
-        return !rail.flipped;
+      case RailType.figure8Point:
+        return [_branchArc(origin, rot, !rail.flipped)];
+      case RailType.singleDoublePoint:
+        const s45 = math.pi / 4;
+        final a1 = _branchArc(origin, rot, false, spanRad: s45);
+        final a2 = _branchArc(
+            a1.posAt(a1.length), rot + s45, true, spanRad: s45);
+        return [a1, a2];
       default:
         return null;
     }

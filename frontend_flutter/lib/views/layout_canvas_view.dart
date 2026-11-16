@@ -494,19 +494,31 @@ class _LayoutPainter extends CustomPainter {
     if (rt == RailType.switchLeft ||
         rt == RailType.switchRight ||
         rt == RailType.autoTurnout ||
-        rt == RailType.switchY) {
+        rt == RailType.switchY ||
+        rt == RailType.figure8Point ||
+        rt == RailType.singleDoublePoint) {
       return _renderSwitch(canvas, origin, rot, rt!, color, pass);
     }
     return _renderStraight(canvas, origin, rot, rt, color, pass);
   }
 
   /// ポイントレール: 本線（直線106mm）+ 分岐カーブ（22.5°）。
-  /// Y字は両方向カーブ、それ以外は主軸直線+片側カーブ。
+  /// Y字・8の字ポイントは両方向カーブ、単線・複線ポイントは主軸直線+
+  /// S字分岐（45°+逆45°で平行複線へ）、それ以外は主軸直線+片側カーブ。
   _JointPair _renderSwitch(Canvas canvas, Offset origin, double rot,
       RailType rt, Color color, _Pass pass) {
     final dir = Offset(math.cos(rot), math.sin(rot));
     final radius = 103.0 * _scale;
     const span = 22.5 * math.pi / 180.0;
+
+    // 弧バンドを1本描く小ヘルパ
+    void arcBand(Offset center, double start, double sweep) {
+      if (pass == _Pass.border) {
+        paintBandBorderArc(canvas, center, radius, start, sweep, _bandWidth * 0.85);
+      } else {
+        paintBandFillArc(canvas, center, radius, start, sweep, _bandWidth * 0.85, color);
+      }
+    }
 
     // 分岐カーブ（origin から ±22.5°）を描く小ヘルパ
     void branch(bool right) {
@@ -517,16 +529,37 @@ class _LayoutPainter extends CustomPainter {
               radius * math.sin(rot + math.pi / 2));
       final start = right ? rot + math.pi / 2 : rot - math.pi / 2;
       final sweep = right ? -span : span;
-      if (pass == _Pass.border) {
-        paintBandBorderArc(canvas, center, radius, start, sweep, _bandWidth * 0.85);
-      } else {
-        paintBandFillArc(canvas, center, radius, start, sweep, _bandWidth * 0.85, color);
-      }
+      arcBand(center, start, sweep);
     }
 
-    if (rt == RailType.switchY) {
+    // S字分岐（45°カーブ+逆45°カーブで平行な複線側線へ）
+    void sBranch() {
+      const s45 = math.pi / 4;
+      final c1 = origin +
+          Offset(radius * math.cos(rot + math.pi / 2),
+              radius * math.sin(rot + math.pi / 2));
+      final a1 = rot - math.pi / 2;
+      final p1 = c1 +
+          Offset(radius * math.cos(a1 + s45), radius * math.sin(a1 + s45));
+      final h1 = rot + s45;
+      final c2 = p1 +
+          Offset(radius * math.cos(h1 - math.pi / 2),
+              radius * math.sin(h1 - math.pi / 2));
+      arcBand(c1, a1, s45);
+      arcBand(c2, h1 + math.pi / 2, -s45);
+    }
+
+    if (rt == RailType.switchY || rt == RailType.figure8Point) {
       branch(false);
       branch(true);
+    } else if (rt == RailType.singleDoublePoint) {
+      final end = origin + dir * (106.0 * _scale);
+      if (pass == _Pass.border) {
+        paintBandBorderLine(canvas, origin, end, _bandWidth);
+      } else {
+        paintBandFillLine(canvas, origin, end, _bandWidth, color);
+      }
+      sBranch();
     } else {
       // 主軸（本線）直線
       final end = origin + dir * (106.0 * _scale);

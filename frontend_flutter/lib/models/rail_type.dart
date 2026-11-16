@@ -15,6 +15,8 @@ enum RailType {
   switchY('switch_y', 'Y字ポイントレール'),
   autoTurnout('auto_turnout', '自動ターンアウトレール'),
   crossPoint('cross_point', '交差ポイントレール'),
+  figure8Point('figure8_point', '8の字ポイントレール'),
+  singleDoublePoint('single_double_point', '単線・複線ポイントレール'),
   bridgePierStandard('bridge_pier_standard', '橋脚（標準）'),
   bridgePierBlock('bridge_pier_block', '橋脚（ブロック）'),
   flexible('flexible', 'まがレール'),

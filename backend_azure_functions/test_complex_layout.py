@@ -29,14 +29,16 @@ from layout_generator.algorithm import search_layout, CLOSE_DIST_MM, CLOSE_ANGLE
 # ---- 部材実測値（エンジンと独立に定義してクロスチェック） ----
 STRAIGHT = {"straight": 106.0, "straight_half": 53.0, "straight_quarter": 26.5,
             "stop_rail": 106.0, "straight_double": 212.0}
-CURVE = {"curve_r": 103.0, "curve_r_large": 206.0, "switch_y": 103.0}
+CURVE = {"curve_r": 103.0, "curve_r_large": 206.0, "switch_y": 103.0,
+         "figure8_point": 103.0}
 CURVE_DEG = 22.5
 INCLINE = {"incline_start": 106.0, "incline_end": 106.0, "incline_middle": 106.0}
 CROSSING_LEN = 106.0
 PIERS = {"bridge_pier_standard", "bridge_pier_block"}
 # ポイントの主軸は直線106mm（本線として通過）。分岐アームは別扱い。
 SWITCH_MAIN = {"switch_left": 106.0, "switch_right": 106.0,
-               "auto_turnout": 106.0, "cross_point": 106.0}
+               "auto_turnout": 106.0, "cross_point": 106.0,
+               "single_double_point": 106.0}
 
 # ジョイント誤差は接続のたびに累積し得るため、許容を少し緩める
 JOINT_TOL = CLOSE_DIST_MM + 1.0

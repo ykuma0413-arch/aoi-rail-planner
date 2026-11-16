@@ -14,6 +14,8 @@ _SPECIAL_TYPES = frozenset({
     RailType.AUTO_TURNOUT.value,
     RailType.CROSSING.value,
     RailType.CROSS_POINT.value,
+    RailType.FIGURE8_POINT.value,
+    RailType.SINGLE_DOUBLE_POINT.value,
 })
 
 
